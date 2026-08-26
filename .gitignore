@@ -1,0 +1,16 @@
+# Node / build artifacts
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temp / scratch
+*.tmp
+.tmp/

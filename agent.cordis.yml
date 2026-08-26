@@ -1,0 +1,137 @@
+# The `clean-agent` agent preset: a minimal, plugin-prompt-free DSH agent.
+#
+# 目标：只保留「系统提示词 + 技能 + MCP + DSH 原生工具」，屏蔽其他一切
+# 第三方插件的提示词注入与工具面。
+#
+# 实现机制：
+#   1. persona 行配置 includeRuntimeContext: false —— 在预设作用域内调用
+#      systemPrompt.suppressRuntimeContext()。宿主层插件（dsh-memory-evolve、
+#      dsh-super-injector、dsh-undo-savepoint、context-doctor 等）通过
+#      ctx.systemPrompt.context() 在 GLOBAL 层注册的运行时上下文（长期记忆
+#      快照、热重载系统说明、undo 说明等）对本次对话完全不可见。
+#   2. clean-tool-filter.mjs —— 在预设作用域内 tools.restrict()，把宿主层
+#      第三方插件注册进 GLOBAL 工具层的工具（dev_*、memory、dtodo、
+#      undo_*、redteam_*、ssh_*、context_audit、describe_image 等）从本
+#      预设的工具列表摘除；MCP 工具（mcp__*）与预设自己注册的原生工具保留。
+#
+# MCP 说明：MCP 工具由宿主层 dsh-mcp-manager 注册进全局 tools registry，
+# 天然被本预设继承（无需在本文件装配任何行）。
+#
+# 本文件是 AGENT-PLANE 组合，挂在 standing scope 下，每个会话按 scope
+# parentage 加入；服务行（若有）必须放 isolate realm。此处无服务发布行，
+# 所有行都是向宿主 registry 的注册/消费，故无需 realm。
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+# 系统提示词（persona）：完整保留，且关闭整个运行时上下文注入。
+# includeRuntimeContext: false 等价于官方 minimal 预设的「Runtime context
+# snapshots are suppressed for this preset」——宿主插件的全部 context 注入
+# 消失，persona 正文与工具面不受影响。
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      You are a coding agent powered by the {{model}} model. Your working
+      directory is {{cwd}}.
+    includeRuntimeContext: false
+
+# 系统提示词（workspace 指令）：保留 AGENTS.md 工作区指令注入。
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── shell ───────────────────────────────────────────────────────────────────
+
+# DSH 原生工具：Windows 上的 PowerShell。
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+
+# DSH 原生工具：文件打开 / 读写 / 搜索 / 编辑。
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+- id: tool-str-replace-editor
+  name: '@deepseek-ai/dsh-tool-str-replace-editor'
+
+# ── background jobs ────────────────────────────────────────────────────────
+
+# DSH 原生工具：后台任务收集/停止（任务注册表在宿主层）。
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+# 技能系统：保留本地技能发现 + 技能目录与加载工具。
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── goals ───────────────────────────────────────────────────────────────────
+
+# DSH 原生工具：目标工具（服务/驱动在宿主层）。
+- id: tool-goal
+  name: '@deepseek-ai/dsh-tool-goal'
+
+# ── compaction ──────────────────────────────────────────────────────────────
+
+# 官方上下文压缩（宿主 tokenMeter 不动；仅本预设启用压缩行为）。
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 8192
+        headChars: 4096
+        tailChars: 1024
+
+# ── remaining model-facing rows ─────────────────────────────────────────────
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+# 官方 web 搜索/抓取工具。
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: true
+
+# ── plugin tool filter ──────────────────────────────────────────────────────
+
+# 剔除宿主第三方插件注册进全局工具层的工具（记忆/热重载/撤销/红队/SSH/
+# 上下文审计/看图等），保留 mcp__* 与上方原生工具。
+#
+# scopeId 必须与本预设 id 一致（装配作用域判定，决定只过滤本预设而非全局）；
+# denyPrefixes 可按你的插件集覆盖（见 clean-tool-filter.mjs 的默认值）。
+- id: clean-tool-filter
+  name: ./clean-tool-filter.mjs?v=1
+  config:
+    scopeId: clean-agent
+
+# (remount-marker-20260827)
