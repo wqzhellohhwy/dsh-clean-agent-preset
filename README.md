@@ -53,12 +53,12 @@ dsh-clean-agent-preset/
 
 1. 将本仓库克隆或复制到你本机的预设目录：
 
-   Windows PowerShell 写法：
+- Windows PowerShell 写法：
 
    ```powershell
    Copy-Item -Recurse .\dsh-clean-agent-preset "$env:USERPROFILE\.dsh\.agent-presets\clean-agent"
    ```
-   Unix bash 写法：
+- Unix bash 写法：
    ```bash
    # 以预设 id 命名目录，例如 clean-agent
    # $HOME 即用户主目录（Windows 上通常是 C:\Users\<你的用户名>），
@@ -67,8 +67,8 @@ dsh-clean-agent-preset/
    ```
 2. 在 dsh 中新建会话，把该会话的预设切换为`clean-agent`或你的预设 id。
 3. （可选）自定义该预设 id：如果你把目录命名为别的 id（如 `minimal`），请同步修改两处：
-   - `agent.cordis.yml` 中 `clean-tool-filter` 行的 `config.scopeId`（默认 `clean-agent`）；
-   - `preset.yml` 的 `name` / `description`。
+- `agent.cordis.yml` 中 `clean-tool-filter` 行的 `config.scopeId`（默认 `clean-agent`）；
+- `preset.yml` 的 `name` / `description`。
 
 ### 验证生效
 
