@@ -47,7 +47,7 @@ dsh-clean-agent-preset/
 ### 前置要求
 
 - 已安装并配置好 [DeepSeek Harness](https://github.com/deepseek-ai/dsh)（dsh），能正常创建 Agent 预设会话。
-- dsh 的 Agent 预设目录结构：`${DSH_HOME:-$HOME/.dsh}/.agent-presets/<preset-id>/`。
+- dsh 的 Agent 预设目录在**用户目录**下：`~/.dsh/.agent-presets/<preset-id>/`（即系统用户主目录中的 `.dsh` 文件夹，dsh 默认安装于此，无需配置环境变量）。
 
 ### 安装
 
@@ -55,7 +55,15 @@ dsh-clean-agent-preset/
 
    ```bash
    # 以预设 id 命名目录，例如 clean-agent
+   # $HOME 即用户主目录（Windows 上通常是 C:\Users\<你的用户名>），
+   # dsh 默认就装在这里，无需设置任何环境变量。
    cp -r dsh-clean-agent-preset "$HOME/.dsh/.agent-presets/clean-agent"
+   ```
+
+   Windows PowerShell 等价写法：
+
+   ```powershell
+   Copy-Item -Recurse .\dsh-clean-agent-preset "$env:USERPROFILE\.dsh\.agent-presets\clean-agent"
    ```
 
 2. （可选）自定义预设 id：如果你把目录命名为别的 id（如 `minimal`），请同步修改两处：
