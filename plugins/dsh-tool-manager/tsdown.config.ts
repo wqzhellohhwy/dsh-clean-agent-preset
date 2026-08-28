@@ -11,13 +11,14 @@ const CLIENT_EXTERNALS = [
 ]
 
 const clientBundle: UserConfig = {
-  entry: { client: 'src/client/index.ts' },
+  entry: { client: 'src/client/index.tsx' },
   outDir: 'lib',
   format: 'cjs',
   platform: 'browser',
   dts: false,
   sourcemap: true,
   clean: false,
+  jsx: 'automatic',
   define: {
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
   },

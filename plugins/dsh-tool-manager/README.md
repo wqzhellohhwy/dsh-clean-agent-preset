@@ -56,6 +56,10 @@ dsh plugin --profile web add <本目录>
 - **host**（`src/index.ts`）：`webServer.register({ kind: 'prefix', path:
   '/tool-manager/api' })` 提供 JSON API；工具枚举用 `tools.view(undefined).
   knownNames`（全量注册名），描述用 `tools.get(name)`。
-- **client**（`src/client/index.ts`）：`slots.inject('settings.section', …)`
-  注册设置页；原生 DOM 渲染（不依赖 React），同源 fetch 调 host API。
+- **client**（`src/client/index.tsx`）：`slots.inject('settings.section', …)`
+  注册设置页。⚠️ **settings.section 的组件契约是 React 组件**——必须用
+  JSX/React 实现（与 mcp-manager / undo 插件一致），纯 DOM 的 `{ render() }`
+  形状会导致该设置项 `active:false`、页面空白。tsdown 配 `jsx: 'automatic'`
+  编译，运行时由浏览器 ModuleLoader 的 `react` / `react/jsx-runtime` 提供；
+  不要使用全局 `React.createElement`（运行时无 `React` 全局变量）。
 - `ctx.get('webServer')` / `ctx.get('tools')` 均为可选读取，缺服务时静默降级。
