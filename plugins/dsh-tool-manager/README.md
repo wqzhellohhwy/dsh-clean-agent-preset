@@ -41,12 +41,16 @@
 # 构建（host 端 esbuild + client 端 tsdown）
 DSH_CHECKOUT=<dsh 源码 checkout 路径> bash scripts/build.sh
 
-# 方式一：super-injector 运行时热装配（重启后由 bundles 接管）
-dev_install_package <本目录>
-
-# 方式二：官方装配（长期生效）
-dsh plugin --profile web add <本目录>
+# 安装（唯一推荐方式）：super-injector 运行时注入
+# 注入 registry 持久化于 ~/.dsh/super-injector/，dsh 重启后由 super-injector 自动恢复
+dev_inject_plugin <本目录>
 ```
+
+> ⚠️ **禁止加入 `dsh.profile.bundles`**：本插件是标准双端 Cordis 插件（仅声明
+> `dsh.client`，无 `dsh.bundle.patch` + `cordis.patch.yml`），**不是 bundle**。
+> 把它加入 profile 的 bundles 列表会让 dsh 启动时 `loadProfile` 强校验失败、
+> 整个 dsh 崩溃（实测踩坑：dsh-terminal-probe、dsh-tool-manager 均因此崩过）。
+> 不要使用 `dsh plugin --profile web add` 或手工编辑 bundles 数组。
 
 构建产出：`lib/index.js`（host）+ `lib/client.js`（browser，ModuleLoader 注册
 `@dsh-external/dsh-tool-manager`，注入 `settings.section` 显示「工具管理」页）。

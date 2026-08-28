@@ -144,7 +144,9 @@ dsh-clean-agent-preset/
 | GET | `/tool-manager/api/config` | 读当前配置 |
 | POST | `/tool-manager/api/config` | 保存配置（denyPrefixes / denyNames / allowPrefixes / allowNames） |
 
-插件构建：宿主平面 bundle 插件，装配到 web profile 的 bundles 列表即长期生效（`dsh plugin --profile web add plugins/dsh-tool-manager`，或以 super-injector `dev_install_package` 热装配）。未安装该插件时，`clean-tool-filter.mjs` 静默使用默认名单，纯净预设功能不受影响。
+插件构建：`dsh-tool-manager` 是**标准双端 Cordis 插件**（host + client，仅声明 `dsh.client`），**不是 bundle 插件**——它没有 `dsh.bundle.patch` + `cordis.patch.yml`，**绝不能加入 `dsh.profile.bundles` 列表**，否则 dsh 启动时 `loadProfile` 强校验 bundle 清单会失败、整个 dsh 崩溃。正确安装方式：通过 **super-injector 运行时注入**（`dev_inject_plugin <目录>` 或 `dev_install_package <目录>`，注入 registry 持久化于 `~/.dsh/super-injector/`，dsh 重启后由 super-injector 自动恢复，不依赖 bundles 列表）。未安装该插件时，`clean-tool-filter.mjs` 静默使用默认名单，纯净预设功能不受影响。
+
+> ⚠️ 经验法则：凡是只声明 `dsh.client`（host/client 双端插件）、无 `dsh.bundle.patch` + `cordis.patch.yml` 的包，一律禁止放入 `dsh.profile.bundles`。若确需 bundle 化，必须先补 `dsh.bundle.patch` 声明 + 编写 `cordis.patch.yml` 入口文件。
 
 ## 可移植性 / 适配你的环境
 
