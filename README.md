@@ -17,8 +17,9 @@ DeepSeek Harness（dsh）是一个高度插件化的宿主。宿主层（HOST �
 ## 核心功能
 
 - **运行时上下文全屏蔽**：会话 `contexts=0`，记忆/热重载/undo 等插件的 context 注入完全不可见。
-- **第三方工具剔除**：`tools.restrict({ deny })` 按前缀动态剔除宿主层注册的第三方工具，MCP（`mcp__*`）与官方工具保留。
+- **第三方工具剔除**：`tools.restrict({ deny })` 按前缀动态剔除宿主层注册的第三方工具，MCP（`mcp__*`）、官方工具与搜索类工具（`anysearch_*`）保留。
 - **第三方 section 剔除**：拦截 `system-prompt/assemble`，剔除第三方插件显式注册的操作说明 section（如 `tool:dsh-undo-savepoint`）。
+- **GUI 工具管理**：配套 `dsh-tool-manager` 插件在 DSH Web 设置界面提供「工具管理」页，可针对本预设单独屏蔽/启用任意工具，配置实时生效（新会话）。
 - **可移植可配置**：作用域 id、deny 前缀、是否启用 section 过滤均可通过预设行 config 调整，适配任意插件组合。
 - **非破坏**：任何过滤失败都保持原装配结果，绝不吞掉用户上下文。
 
@@ -30,14 +31,17 @@ DeepSeek Harness（dsh）是一个高度插件化的宿主。宿主层（HOST �
 - **`@deepseek-ai/dsh-system-prompt`** —— `systemPrompt.section/context` 与 `system-prompt/assemble` 事件
 - **`@deepseek-ai/dsh-scope`** —— scope 作用域体系
 - **YAML / ESM（.mjs）** —— 预设组合文件与过滤器实现
+- **esbuild / tsdown** —— 配套插件打包（host 端 esbuild，client 端 tsdown）
 
 ## 目录结构
 
 ```
 dsh-clean-agent-preset/
 ├── agent.cordis.yml        # 预设组合：装配官方工具/技能/压缩/persona + 屏蔽行
-├── clean-tool-filter.mjs   # 屏蔽机制核心（restrict + assemble 拦截，可配置）
+├── clean-tool-filter.mjs   # 屏蔽机制核心（restrict + assemble 拦截，可配置 + GUI 联动）
 ├── preset.yml              # 预设元数据（name / description）
+├── plugins/
+│   └── dsh-tool-manager/   # 配套插件：GUI 设置页「工具管理」（host API + client 页）
 ├── README.md               # 本文档
 └── LICENSE                 # MIT 许可证
 ```
@@ -118,8 +122,29 @@ dsh-clean-agent-preset/
 ```js
 ['dev_', 'memory', 'dtodo', 'skill_manage', 'undo_',
  'redteam_', 'ssh_', 'context_audit', 'describe_image',
- 'anysearch_', 'de_']
+ 'de_']
 ```
+
+> 注意：`anysearch_*`（搜索类工具）**不在默认屏蔽名单**——它是搜索能力，默认保留；你可以在 GUI 工具管理页或 `denyPrefixes` 中显式屏蔽。
+
+### GUI 工具管理（dsh-tool-manager 插件）
+
+配套插件 `plugins/dsh-tool-manager` 在 DSH Web 设置界面的侧栏新增一个「**工具管理**」页面：
+
+- **枚举全部工具**：从宿主 tools registry 读取当前注册的所有工具，按来源分组显示（原生 / MCP / 第三方）。
+- **单独屏蔽/启用**：每个工具一个勾选开关。勾选 = 在纯净预设中屏蔽，取消 = 启用/豁免。也支持按前缀批量屏蔽。
+- **持久化**：保存后写入 `$DSH_HOME/.dsh/tool-manager.json`（与 `clean-tool-filter.mjs` 共用同一文件）。
+- **生效时机**：保存后**新会话**生效；别名「豁免」优先级高于屏蔽（`allowNames` / `allowPrefixes` 命中即保留，`mcp__` 默认豁免）。
+
+主机 API（同源）：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/tool-manager/api/tools` | 枚举全部工具 + 当前配置 |
+| GET | `/tool-manager/api/config` | 读当前配置 |
+| POST | `/tool-manager/api/config` | 保存配置（denyPrefixes / denyNames / allowPrefixes / allowNames） |
+
+插件构建：宿主平面 bundle 插件，装配到 web profile 的 bundles 列表即长期生效（`dsh plugin --profile web add plugins/dsh-tool-manager`，或以 super-injector `dev_install_package` 热装配）。未安装该插件时，`clean-tool-filter.mjs` 静默使用默认名单，纯净预设功能不受影响。
 
 ## 可移植性 / 适配你的环境
 
@@ -131,6 +156,7 @@ dsh-clean-agent-preset/
 4. **Windows / POSIX**：`tool-pwsh` 行已用 `disabled: !!js process.platform !== 'win32'` 做平台判定；在 POSIX 上会自动禁用 pwsh 工具。
 5. **上下文压缩**：compaction 组（`cordis:group` + `isolate`）按官方方式启用，无需改动。
 6. **保留官方工具**：如果你需要增加/删减官方工具，直接在 `agent.cordis.yml` 中增删对应行（`@deepseek-ai/dsh-tool-*`）。
+7. **配套插件**：GUI 工具管理页是可选的。不装插件时预设仍按默认名单工作；装了则可以可视化覆盖。
 
 ### 重要：ESM 缓存
 
@@ -142,7 +168,9 @@ dsh-clean-agent-preset/
 
 - `contexts` = **0**（运行时上下文全屏蔽）
 - `sections` 仅含官方 + 原生工具，无第三方插件 section
-- 工具面 = **MCP 工具 + 官方原生工具**，第三方工具全部剔除
+- 工具面 = **MCP 工具（playwright-mcp 全套 28 个）+ 官方原生工具 + 搜索工具**，第三方工具（memory/dev_*/undo_*/ssh_* 等）全部剔除
+- `GET /tool-manager/api/tools` 枚举 90+ 工具并正确分类（mcp/native/third）；配置读写往返验证通过
+- GUI 配置联动：屏蔽 `web_fetch` → filter 装配时剔除；豁免 `memory` → 保留；均验证通过
 
 ## 许可证
 

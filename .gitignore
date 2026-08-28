@@ -14,3 +14,7 @@ Thumbs.db
 # Temp / scratch
 *.tmp
 .tmp/
+
+# Local helper scripts
+提交README.bat
+*.bat

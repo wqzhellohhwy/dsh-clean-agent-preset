@@ -125,12 +125,18 @@
 # ── plugin tool filter ──────────────────────────────────────────────────────
 
 # 剔除宿主第三方插件注册进全局工具层的工具（记忆/热重载/撤销/红队/SSH/
-# 上下文审计/看图等），保留 mcp__* 与上方原生工具。
+# 上下文审计/看图等），保留 mcp__*、官方工具与搜索类工具（anysearch_*）。
 #
 # scopeId 必须与本预设 id 一致（装配作用域判定，决定只过滤本预设而非全局）；
 # denyPrefixes 可按你的插件集覆盖（见 clean-tool-filter.mjs 的默认值）。
+#
+# 自 v14 起支持 GUI 联动：dsh-tool-manager 插件（见 plugins/dsh-tool-manager）
+# 在 DSH Web 设置页提供「工具管理」页面，写入
+# $DSH_HOME/.dsh/tool-manager.json（denyPrefixes/denyNames/allowPrefixes/
+# allowNames），本过滤器装配时读取并合并——allow 命中即豁免，deny 命中且
+# 未豁免才剔除。未安装该插件时静默使用默认名单。
 - id: clean-tool-filter
-  name: ./clean-tool-filter.mjs?v=1
+  name: ./clean-tool-filter.mjs?v=14
   config:
     scopeId: clean-agent
 
