@@ -100,17 +100,53 @@ function classify(name: string): string {
   return 'native'
 }
 
-function listTools(ctx: AppContext): { name: string; description: string; category: string }[] {
+// 第三方工具 → 归属大插件(显示组名)。顺序即优先级(长前缀在前)。
+const THIRD_PLUGIN_MAP: Array<[string, string]> = [
+  ['dev_mode_', 'dsh-mode-boost'],
+  ['dev_', 'dsh-super-injector'],
+  ['anysearch_', 'anysearch-dsh'],
+  ['memory', 'dsh-memory-evolve'],
+  ['dtodo', 'dsh-memory-evolve'],
+  ['skill_manage', 'dsh-memory-evolve'],
+  ['de_', 'dsh-memory-evolve'],
+  ['undo_', 'dsh-undo-plugin'],
+  ['context_audit', 'dsh-context-doctor'],
+  ['ssh_', 'ssh'],
+  ['redteam_', 'redteam'],
+  ['describe_image', 'describe-image'],
+]
+
+// 计算工具的分组键:mcp 按 server 名、third 按归属插件、其余按 category。
+function groupOf(name: string, category: string): string {
+  if (category === 'mcp') {
+    const rest = name.slice('mcp__'.length)
+    const idx = rest.indexOf('__')
+    return idx >= 0 ? rest.slice(0, idx) : 'mcp'
+  }
+  if (category === 'third') {
+    for (const [prefix, plugin] of THIRD_PLUGIN_MAP) {
+      if (name.startsWith(prefix)) return plugin
+    }
+    return '其他插件'
+  }
+  return category
+}
+
+function listTools(ctx: AppContext): { name: string; description: string; category: string; group: string }[] {
   const tools = ctx.get?.('tools') as AppContext['tools'] | undefined
   if (!tools) return []
   const names = tools.view(undefined).knownNames ?? []
   return [...names]
     .sort()
-    .map((n) => ({
-      name: n,
-      description: String(tools.get(n)?.description ?? '').slice(0, 120),
-      category: classify(n),
-    }))
+    .map((n) => {
+      const category = classify(n)
+      return {
+        name: n,
+        description: String(tools.get(n)?.description ?? '').slice(0, 120),
+        category,
+        group: groupOf(n, category),
+      }
+    })
 }
 
 async function readBody(req: any): Promise<string> {

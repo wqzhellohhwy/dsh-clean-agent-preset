@@ -1,9 +1,16 @@
 /**
  * @dsh-external/dsh-tool-manager — client 设置页(settings.section)。
  * 在 DSH Web GUI 设置侧栏新增「工具管理」页面:枚举当前寄存器全部工具,
- * 按来源分类(原生/MCP/第三方),允许对「纯净预设(clean-agent)」单独
- * 屏蔽/启用任意工具;配置经同源 API 持久化到 $DSH_HOME/.dsh/tool-manager.json,
- * clean-agent 的 clean-tool-filter.mjs 装配时读取并生效(新会话生效)。
+ * 按来源(原生/MCP/第三方)分组(MCP 按 mcp server 名、第三方按归属大插件),
+ * 允许对「纯净预设(clean-agent)」单独屏蔽/启用任意工具;配置经同源 API
+ * 持久化到 $DSH_HOME/.dsh/tool-manager.json,clean-agent 的 clean-tool-filter.mjs
+ * 装配时读取并生效(新会话生效)。
+ *
+ * 交互模型(2026-08-28 重构):
+ *   - 每个工具有两个独立控件:「☑️ 选中」(用于批量操作) + 「启用/禁用」开关(单个生效)。
+ *   - 顶部批量工具栏:全选(作用于当前筛选结果)/禁用选中/启用选中;
+ *     以及「选中并禁用所有 MCP」「选中并禁用所有第三方」两个一键动作。
+ *   - 一键禁用只写纯净预设屏蔽名单(denyNames),不真的关闭 MCP/插件服务。
  *
  * ⚠️ 组件契约:settings.section 的注册组件必须是 React 组件(与 mcp-manager /
  * undo 插件一致);纯 DOM 的 { render() } 形状会导致 active:false、页面空白。
@@ -25,6 +32,7 @@ interface ToolRow {
   name: string
   description: string
   category: 'mcp' | 'native' | 'third' | 'unknown'
+  group: string
 }
 
 interface Config {
@@ -41,14 +49,13 @@ const DEFAULT_THIRD_PREFIXES = [
 ]
 
 const CATEGORY_LABEL: Record<string, string> = {
-  mcp: 'MCP 工具（浏览器/搜索等外部能力，默认启用）',
+  mcp: 'MCP 工具（默认启用）',
   native: 'DSH 原生工具 / 纯净预设装配（默认启用）',
   third: '宿主第三方插件工具（纯净预设默认屏蔽）',
   unknown: '其他',
 }
 
-const catPriority = (c: string): number =>
-  c === 'native' ? 0 : c === 'mcp' ? 1 : c === 'third' ? 2 : 3
+const CATEGORY_ORDER = ['native', 'mcp', 'third', 'unknown'] as const
 
 const styles = `
 .tm-page{font-size:14px;line-height:1.6;padding:14px 16px;max-width:860px;color:var(--dsw-alias-label-primary)}
@@ -60,14 +67,24 @@ const styles = `
 .tm-btn{background:var(--dsw-alias-state-business-primary);color:#fff;border:none;border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;white-space:nowrap;font-family:inherit}
 .tm-btn.ghost{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary)}
 .tm-btn.danger{background:transparent;border:1px solid var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}
+.tm-btn:disabled{opacity:.4;cursor:not-allowed}
 .tm-group{margin-bottom:14px}
 .tm-group h4{margin:0 0 6px;font-size:13px;color:var(--dsw-alias-brand-primary)}
+.tm-subgroup{margin-bottom:10px}
+.tm-subtitle{font-size:12px;color:var(--dsw-alias-label-secondary);margin:0 0 6px;font-weight:600}
+.tm-subcount{color:var(--dsw-alias-label-tertiary);font-weight:400;margin-left:6px}
 .tm-tools{display:flex;flex-wrap:wrap;gap:6px}
-.tm-chip{display:flex;align-items:center;gap:6px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 8px;font-size:13px;background:var(--dsw-alias-bg-layer-2);cursor:pointer}
-.tm-chip input{cursor:pointer}
-.tm-chip.denied{opacity:.55;border-color:var(--dsw-alias-state-error-primary)}
+.tm-chip{display:flex;align-items:center;gap:7px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 8px;font-size:13px;background:var(--dsw-alias-bg-layer-2)}
+.tm-chip input[type=checkbox]{cursor:pointer}
+.tm-chip.denied{opacity:.55}
 .tm-chip.denied .tm-name{text-decoration:line-through}
+.tm-chip.selected{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary) inset}
 .tm-name{color:var(--dsw-alias-label-primary);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tm-switch{border:none;border-radius:999px;padding:2px 10px;cursor:pointer;font-size:12px;font-family:inherit;line-height:1.5;white-space:nowrap}
+.tm-switch.on{background:var(--dsw-alias-state-success-primary);color:#fff}
+.tm-switch.off{background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary)}
+.tm-batch{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;padding:8px 10px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px}
+.tm-sep{width:1px;align-self:stretch;background:var(--dsw-alias-border-l2);margin:0 2px}
 .tm-save-row{display:flex;gap:8px;align-items:center;margin-top:12px}
 .tm-status{font-size:13px;color:var(--dsw-alias-state-success-primary)}
 .tm-status.err{color:var(--dsw-alias-state-error-primary)}
@@ -76,7 +93,7 @@ const styles = `
 .tm-search .tm-input{width:280px;margin-right:0}
 .tm-filter{display:flex;gap:6px}
 .tm-btn.tm-active{background:var(--dsw-alias-state-business-primary);color:#fff;border-color:var(--dsw-alias-state-business-primary)}
-.tm-count{font-size:12px;color:var(--dsw-alias-label-tertiary);margin-bottom:10px}
+.tm-count{font-size:12px;color:var(--dsw-alias-label-tertiary);margin:0}
 .tm-name mark{background:transparent;color:var(--dsw-alias-brand-primary);font-weight:600}
 `
 
@@ -87,6 +104,7 @@ function ToolManagerSection(): ReactElement {
   const [loaded, setLoaded] = useState(false)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<'all' | 'enabled' | 'denied'>('all')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     let cancelled = false
@@ -122,18 +140,39 @@ function ToolManagerSection(): ReactElement {
     return DEFAULT_THIRD_PREFIXES.some((p) => name.startsWith(p))
   }
 
-  const toggle = (name: string, denied: boolean): void => {
-    setCfg((prev) => {
-      const next: Config = { ...prev, denyNames: [...prev.denyNames], allowNames: [...prev.allowNames] }
-      if (denied) {
-        if (!next.denyNames.includes(name)) next.denyNames.push(name)
-        next.allowNames = next.allowNames.filter((n) => n !== name)
-      } else {
-        next.denyNames = next.denyNames.filter((n) => n !== name)
-        if (DEFAULT_THIRD_PREFIXES.some((p) => name.startsWith(p)) && !next.allowNames.includes(name)) {
-          next.allowNames.push(name)
-        }
+  // 把单个工具设为启用/禁用,返回新 Config(双向清理 allow/deny 名单,避免残留复活)。
+  const applyDeny = (cfg0: Config, name: string, denied: boolean): Config => {
+    const next: Config = { ...cfg0, denyNames: [...cfg0.denyNames], allowNames: [...cfg0.allowNames] }
+    if (denied) {
+      if (!next.denyNames.includes(name)) next.denyNames.push(name)
+      next.allowNames = next.allowNames.filter((n) => n !== name)
+    } else {
+      next.denyNames = next.denyNames.filter((n) => n !== name)
+      if (DEFAULT_THIRD_PREFIXES.some((p) => name.startsWith(p)) && !next.allowNames.includes(name)) {
+        next.allowNames.push(name)
       }
+    }
+    return next
+  }
+
+  const toggle = (name: string, denied: boolean): void => {
+    setCfg((prev) => applyDeny(prev, name, denied))
+  }
+
+  const batchSetDenied = (names: string[], denied: boolean): void => {
+    if (names.length === 0) return
+    setCfg((prev) => {
+      let next = prev
+      for (const n of names) next = applyDeny(next, n, denied)
+      return next
+    })
+  }
+
+  const toggleSelect = (name: string): void => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
       return next
     })
   }
@@ -158,18 +197,9 @@ function ToolManagerSection(): ReactElement {
 
   const reset = (): void => {
     setCfg({ denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [] })
+    setSelected(new Set())
     setStatus('已恢复默认名单（未保存，点「保存配置」生效）')
   }
-
-  const groups = useMemo(() => {
-    const map = new Map<string, ToolRow[]>()
-    for (const t of tools) {
-      const arr = map.get(t.category) ?? []
-      arr.push(t)
-      map.set(t.category, arr)
-    }
-    return [...map.entries()].sort((a, b) => catPriority(a[0]) - catPriority(b[0]))
-  }, [tools])
 
   const matches = (t: ToolRow): boolean => {
     const q = query.trim().toLowerCase()
@@ -180,7 +210,49 @@ function ToolManagerSection(): ReactElement {
     return true
   }
 
-  const matchedCount = useMemo(() => tools.filter(matches).length, [tools, query, filter, cfg])
+  const filteredTools = useMemo(() => tools.filter(matches), [tools, query, filter, cfg])
+
+  const sections = useMemo(() => {
+    const byCat = new Map<string, ToolRow[]>()
+    for (const t of filteredTools) {
+      const arr = byCat.get(t.category) ?? []
+      arr.push(t)
+      byCat.set(t.category, arr)
+    }
+    const out: { cat: string; label: string; subs: { key: string; label: string; rows: ToolRow[] }[] }[] = []
+    for (const cat of CATEGORY_ORDER) {
+      const rows = byCat.get(cat)
+      if (!rows || rows.length === 0) continue
+      if (cat === 'mcp' || cat === 'third') {
+        const byGroup = new Map<string, ToolRow[]>()
+        for (const t of rows) {
+          const g = t.group || '其他'
+          const arr = byGroup.get(g) ?? []
+          arr.push(t)
+          byGroup.set(g, arr)
+        }
+        const subs = [...byGroup.entries()]
+          .map(([g, rs]) => ({ key: g, label: g, rows: rs }))
+          .sort((a, b) => a.label.localeCompare(b.label))
+        out.push({ cat, label: CATEGORY_LABEL[cat] ?? cat, subs })
+      } else {
+        out.push({ cat, label: CATEGORY_LABEL[cat] ?? cat, subs: [{ key: cat, label: '', rows }] })
+      }
+    }
+    return out
+  }, [filteredTools])
+
+  const allVisibleSelected = filteredTools.length > 0 && filteredTools.every((t) => selected.has(t.name))
+
+  const toggleSelectAll = (): void => {
+    setSelected(allVisibleSelected ? new Set<string>() : new Set(filteredTools.map((t) => t.name)))
+  }
+
+  const selectDisableCategory = (cat: 'mcp' | 'third'): void => {
+    const names = tools.filter((t) => t.category === cat).map((t) => t.name)
+    setSelected((prev) => new Set([...prev, ...names]))
+    batchSetDenied(names, true)
+  }
 
   const highlight = (text: string, q: string): ReactElement | string => {
     if (!q) return text
@@ -200,7 +272,7 @@ function ToolManagerSection(): ReactElement {
       <h3>工具管理（纯净预设 clean-agent）</h3>
       <p className="tm-desc">
         针对 clean-agent 纯净预设控制工具面：MCP 工具与 DSH 原生工具默认启用，第三方插件工具默认屏蔽。
-        勾选 = 屏蔽，取消勾选 = 启用。保存后对新会话生效。
+        每个工具右侧的开关控制「启用/禁用」，左侧 ☑️ 用于批量选中。保存后对新会话生效。
       </p>
       {!loaded ? (
         <p className="tm-hint">加载中…</p>
@@ -231,32 +303,80 @@ function ToolManagerSection(): ReactElement {
           </div>
           <div className="tm-count">
             共 {tools.length} 个工具
-            {query.trim() || filter !== 'all' ? `，筛选后 ${matchedCount} 个` : ''}
+            {query.trim() || filter !== 'all' ? `，筛选后 ${filteredTools.length} 个` : ''}
           </div>
+
+          <div className="tm-batch">
+            <span className="tm-count">已选 {selected.size} 个</span>
+            <button className="tm-btn ghost" onClick={toggleSelectAll}>
+              {allVisibleSelected ? '取消全选' : '全选'}
+            </button>
+            <button className="tm-btn danger" onClick={() => batchSetDenied([...selected], true)} disabled={selected.size === 0}>
+              禁用选中
+            </button>
+            <button className="tm-btn ghost" onClick={() => batchSetDenied([...selected], false)} disabled={selected.size === 0}>
+              启用选中
+            </button>
+            <span className="tm-sep" />
+            <button className="tm-btn ghost" onClick={() => selectDisableCategory('mcp')}>
+              选中并禁用所有 MCP
+            </button>
+            <button className="tm-btn ghost" onClick={() => selectDisableCategory('third')}>
+              选中并禁用所有第三方
+            </button>
+          </div>
+
           <div className="tm-rule">
             <label>屏蔽前缀（附加）</label>
             <PrefixInput cfg={cfg} setCfg={setCfg} />
           </div>
-          {groups.map(([cat, rows]) => {
-            const visible = rows.filter(matches)
-            if (visible.length === 0) return null
-            return (
-              <div className="tm-group" key={cat}>
-                <h4>{CATEGORY_LABEL[cat] ?? cat}</h4>
-                <div className="tm-tools">
-                  {visible.map((t) => {
-                    const denied = isEffectivelyDenied(t.name)
-                    return (
-                      <label className={'tm-chip' + (denied ? ' denied' : '')} key={t.name} title={t.description || t.name}>
-                        <input type="checkbox" checked={!denied} onChange={() => toggle(t.name, !denied)} />
-                        <span className="tm-name">{highlight(t.name, query.trim())}</span>
-                      </label>
-                    )
-                  })}
+
+          {sections.map((sec) => (
+            <div className="tm-group" key={sec.cat}>
+              <h4>{sec.label}</h4>
+              {sec.subs.map((sub) => (
+                <div className="tm-subgroup" key={sub.key}>
+                  {sub.label ? (
+                    <h5 className="tm-subtitle">
+                      {sub.label}
+                      <span className="tm-subcount">{sub.rows.length}</span>
+                    </h5>
+                  ) : null}
+                  <div className="tm-tools">
+                    {sub.rows.map((t) => {
+                      const denied = isEffectivelyDenied(t.name)
+                      const sel = selected.has(t.name)
+                      return (
+                        <div
+                          className={'tm-chip' + (denied ? ' denied' : '') + (sel ? ' selected' : '')}
+                          key={t.name}
+                          title={(t.description || '') + '（' + (t.group ? t.group + ' · ' : '') + (denied ? '已禁用' : '已启用') + '）'}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={sel}
+                            onChange={() => toggleSelect(t.name)}
+                            title="选中（用于批量操作）"
+                          />
+                          <span className="tm-name">{highlight(t.name, query.trim())}</span>
+                          <button
+                            className={'tm-switch' + (denied ? ' off' : ' on')}
+                            role="switch"
+                            aria-checked={!denied}
+                            onClick={() => toggle(t.name, !denied)}
+                            title={denied ? '点击启用' : '点击禁用'}
+                          >
+                            {denied ? '禁用' : '启用'}
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
-              </div>
-            )
-          })}
+              ))}
+            </div>
+          ))}
+
           <div className="tm-save-row">
             <button className="tm-btn" onClick={save}>保存配置</button>
             <button className="tm-btn ghost" onClick={reset}>恢复默认</button>
@@ -265,7 +385,7 @@ function ToolManagerSection(): ReactElement {
             ) : null}
           </div>
           <div className="tm-hint">
-            提示：屏蔽/启用通过工具名前缀或精确名生效；修改后请新建 clean-agent 会话验证工具面。
+            提示：屏蔽/启用通过工具名前缀或精确名生效；「禁用选中/一键禁用」只写纯净预设屏蔽名单（denyNames），不关闭 MCP/插件服务本身。修改后请新建 clean-agent 会话验证工具面。
             配置文件：$DSH_HOME/.dsh/tool-manager.json
           </div>
         </>
