@@ -17,7 +17,7 @@
  * 本文件用 JSX(tsx)编译,tsdown 自动转 react/jsx-runtime——不要改成
  * React.createElement 全局名,那在运行时是 undefined。
  */
-import { useEffect, useMemo, useState, type ReactElement, type ChangeEvent, type KeyboardEvent, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useMemo, useState, type ReactElement, type ChangeEvent, type KeyboardEvent } from 'react'
 import type { SlotsService } from '@deepseek-ai/dsh-client-ui-slots'
 
 type ClientContext = {
@@ -71,8 +71,11 @@ const styles = `
 .tm-group{margin-bottom:14px}
 .tm-group h4{margin:0 0 6px;font-size:13px;color:var(--dsw-alias-brand-primary)}
 .tm-subgroup{margin-bottom:10px}
-.tm-subtitle{font-size:12px;color:var(--dsw-alias-label-secondary);margin:0 0 6px;font-weight:600}
+.tm-subhead{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.tm-fold{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border-radius:4px;width:22px;height:22px;line-height:1;cursor:pointer;padding:0;font-size:12px;font-family:inherit;flex:0 0 auto}
+.tm-subtitle{font-size:12px;color:var(--dsw-alias-label-secondary);margin:0;font-weight:600}
 .tm-subcount{color:var(--dsw-alias-label-tertiary);font-weight:400;margin-left:6px}
+.tm-btn.tm-mini{padding:2px 8px;font-size:12px}
 .tm-tools{display:flex;flex-wrap:wrap;gap:6px}
 .tm-chip{display:flex;align-items:center;gap:7px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 8px;font-size:13px;background:var(--dsw-alias-bg-layer-2)}
 .tm-chip input[type=checkbox]{cursor:pointer}
@@ -105,6 +108,7 @@ function ToolManagerSection(): ReactElement {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<'all' | 'enabled' | 'denied'>('all')
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     let cancelled = false
@@ -155,17 +159,34 @@ function ToolManagerSection(): ReactElement {
     return next
   }
 
+  const persist = (next: Config): void => {
+    void (async () => {
+      try {
+        const res = await fetch(`${API}/config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(next),
+        })
+        const body = await res.json()
+        setStatus(body?.ok ? '✅ 已保存，新会话生效' : '❌ 保存失败：' + (body?.error ?? 'unknown'))
+      } catch (e) {
+        setStatus('❌ 保存失败：' + String(e))
+      }
+    })()
+  }
+
+  const commit = (next: Config): void => {
+    setCfg(next)
+    persist(next)
+  }
+
   const toggle = (name: string, denied: boolean): void => {
-    setCfg((prev) => applyDeny(prev, name, denied))
+    commit(applyDeny(cfg, name, denied))
   }
 
   const batchSetDenied = (names: string[], denied: boolean): void => {
     if (names.length === 0) return
-    setCfg((prev) => {
-      let next = prev
-      for (const n of names) next = applyDeny(next, n, denied)
-      return next
-    })
+    commit(names.reduce((acc, n) => applyDeny(acc, n, denied), cfg))
   }
 
   const toggleSelect = (name: string): void => {
@@ -177,28 +198,9 @@ function ToolManagerSection(): ReactElement {
     })
   }
 
-  const save = (): void => {
-    void (async () => {
-      try {
-        const res = await fetch(`${API}/config`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(cfg),
-        })
-        const body = await res.json()
-        setStatus(body?.ok
-          ? '✅ 已保存：新会话的 clean-agent 装配将生效'
-          : '❌ 保存失败：' + (body?.error ?? 'unknown'))
-      } catch (e) {
-        setStatus('❌ 保存失败：' + String(e))
-      }
-    })()
-  }
-
   const reset = (): void => {
-    setCfg({ denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [] })
     setSelected(new Set())
-    setStatus('已恢复默认名单（未保存，点「保存配置」生效）')
+    commit({ denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [] })
   }
 
   const matches = (t: ToolRow): boolean => {
@@ -254,6 +256,19 @@ function ToolManagerSection(): ReactElement {
     batchSetDenied(names, true)
   }
 
+  const toggleCollapse = (key: string): void => {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const disableGroup = (rows: ToolRow[]): void => {
+    batchSetDenied(rows.map((t) => t.name), true)
+  }
+
   const highlight = (text: string, q: string): ReactElement | string => {
     if (!q) return text
     const idx = text.toLowerCase().indexOf(q.toLowerCase())
@@ -272,7 +287,7 @@ function ToolManagerSection(): ReactElement {
       <h3>工具管理（纯净预设 clean-agent）</h3>
       <p className="tm-desc">
         针对 clean-agent 纯净预设控制工具面：MCP 工具与 DSH 原生工具默认启用，第三方插件工具默认屏蔽。
-        每个工具右侧的开关控制「启用/禁用」，左侧 ☑️ 用于批量选中。保存后对新会话生效。
+        每个工具右侧的开关控制「启用/禁用」，左侧 ☑️ 用于批量选中。改动即时自动保存，对新会话生效。
       </p>
       {!loaded ? (
         <p className="tm-hint">加载中…</p>
@@ -328,64 +343,82 @@ function ToolManagerSection(): ReactElement {
 
           <div className="tm-rule">
             <label>屏蔽前缀（附加）</label>
-            <PrefixInput cfg={cfg} setCfg={setCfg} />
+            <PrefixInput cfg={cfg} commit={commit} />
           </div>
 
           {sections.map((sec) => (
             <div className="tm-group" key={sec.cat}>
               <h4>{sec.label}</h4>
-              {sec.subs.map((sub) => (
-                <div className="tm-subgroup" key={sub.key}>
-                  {sub.label ? (
-                    <h5 className="tm-subtitle">
-                      {sub.label}
-                      <span className="tm-subcount">{sub.rows.length}</span>
-                    </h5>
-                  ) : null}
-                  <div className="tm-tools">
-                    {sub.rows.map((t) => {
-                      const denied = isEffectivelyDenied(t.name)
-                      const sel = selected.has(t.name)
-                      return (
-                        <div
-                          className={'tm-chip' + (denied ? ' denied' : '') + (sel ? ' selected' : '')}
-                          key={t.name}
-                          title={(t.description || '') + '（' + (t.group ? t.group + ' · ' : '') + (denied ? '已禁用' : '已启用') + '）'}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={sel}
-                            onChange={() => toggleSelect(t.name)}
-                            title="选中（用于批量操作）"
-                          />
-                          <span className="tm-name">{highlight(t.name, query.trim())}</span>
-                          <button
-                            className={'tm-switch' + (denied ? ' off' : ' on')}
-                            role="switch"
-                            aria-checked={!denied}
-                            onClick={() => toggle(t.name, !denied)}
-                            title={denied ? '点击启用' : '点击禁用'}
-                          >
-                            {denied ? '禁用' : '启用'}
-                          </button>
-                        </div>
-                      )
-                    })}
+              {sec.subs.map((sub) => {
+                const isCollapsed = collapsed.has(sub.key)
+                return (
+                  <div className="tm-subgroup" key={sub.key}>
+                    <div className="tm-subhead">
+                      <button
+                        className="tm-fold"
+                        onClick={() => toggleCollapse(sub.key)}
+                        title={isCollapsed ? '展开' : '折叠'}
+                      >
+                        {isCollapsed ? '▸' : '▾'}
+                      </button>
+                      <span className="tm-subtitle">
+                        {sub.label || '全部'}
+                        <span className="tm-subcount">{sub.rows.length}</span>
+                      </span>
+                      <button
+                        className="tm-btn ghost tm-mini"
+                        onClick={() => disableGroup(sub.rows)}
+                        title="把该分组内所有工具设为禁用"
+                      >
+                        禁用分组
+                      </button>
+                    </div>
+                    {!isCollapsed ? (
+                      <div className="tm-tools">
+                        {sub.rows.map((t) => {
+                          const denied = isEffectivelyDenied(t.name)
+                          const sel = selected.has(t.name)
+                          return (
+                            <div
+                              className={'tm-chip' + (denied ? ' denied' : '') + (sel ? ' selected' : '')}
+                              key={t.name}
+                              title={(t.description || '') + '（' + (t.group ? t.group + ' · ' : '') + (denied ? '已禁用' : '已启用') + '）'}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={sel}
+                                onChange={() => toggleSelect(t.name)}
+                                title="选中（用于批量操作）"
+                              />
+                              <span className="tm-name">{highlight(t.name, query.trim())}</span>
+                              <button
+                                className={'tm-switch' + (denied ? ' off' : ' on')}
+                                role="switch"
+                                aria-checked={!denied}
+                                onClick={() => toggle(t.name, !denied)}
+                                title={denied ? '点击启用' : '点击禁用'}
+                              >
+                                {denied ? '禁用' : '启用'}
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : null}
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           ))}
 
           <div className="tm-save-row">
-            <button className="tm-btn" onClick={save}>保存配置</button>
             <button className="tm-btn ghost" onClick={reset}>恢复默认</button>
             {status ? (
               <span className={'tm-status' + (status.startsWith('❌') || status.startsWith('⚠️') ? ' err' : '')}>{status}</span>
             ) : null}
           </div>
           <div className="tm-hint">
-            提示：屏蔽/启用通过工具名前缀或精确名生效；「禁用选中/一键禁用」只写纯净预设屏蔽名单（denyNames），不关闭 MCP/插件服务本身。修改后请新建 clean-agent 会话验证工具面。
+            提示：启用/禁用即时自动保存，通过工具名前缀或精确名生效；「禁用分组 / 禁用选中 / 一键禁用」只写纯净预设屏蔽名单（denyNames），不关闭 MCP/插件服务本身。修改后请新建 clean-agent 会话验证工具面。
             配置文件：$DSH_HOME/.dsh/tool-manager.json
           </div>
         </>
@@ -396,15 +429,15 @@ function ToolManagerSection(): ReactElement {
 
 function PrefixInput(props: {
   cfg: Config
-  setCfg: Dispatch<SetStateAction<Config>>
+  commit: (next: Config) => void
 }): ReactElement {
   const [value, setValue] = useState('')
-  const { cfg, setCfg } = props
+  const { cfg, commit } = props
 
   const add = (): void => {
     const v = value.trim()
     if (v && !cfg.denyPrefixes.includes(v)) {
-      setCfg({ ...cfg, denyPrefixes: [...cfg.denyPrefixes, v] })
+      commit({ ...cfg, denyPrefixes: [...cfg.denyPrefixes, v] })
     }
     setValue('')
   }
@@ -425,7 +458,7 @@ function PrefixInput(props: {
           <button
             className="tm-btn danger"
             style={{ padding: '0 4px', margin: '0 0 0 4px' }}
-            onClick={() => setCfg({ ...cfg, denyPrefixes: cfg.denyPrefixes.filter((q) => q !== p) })}
+            onClick={() => commit({ ...cfg, denyPrefixes: cfg.denyPrefixes.filter((q) => q !== p) })}
           >
             ✕
           </button>
