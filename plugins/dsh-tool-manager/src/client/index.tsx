@@ -72,6 +72,12 @@ const styles = `
 .tm-status{font-size:13px;color:var(--dsw-alias-state-success-primary)}
 .tm-status.err{color:var(--dsw-alias-state-error-primary)}
 .tm-hint{font-size:12px;color:var(--dsw-alias-label-tertiary);margin-top:8px}
+.tm-search{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.tm-search .tm-input{width:280px;margin-right:0}
+.tm-filter{display:flex;gap:6px}
+.tm-btn.tm-active{background:var(--dsw-alias-state-business-primary);color:#fff;border-color:var(--dsw-alias-state-business-primary)}
+.tm-count{font-size:12px;color:var(--dsw-alias-label-tertiary);margin-bottom:10px}
+.tm-name mark{background:transparent;color:var(--dsw-alias-brand-primary);font-weight:600}
 `
 
 function ToolManagerSection(): ReactElement {
@@ -79,6 +85,8 @@ function ToolManagerSection(): ReactElement {
   const [cfg, setCfg] = useState<Config>({ denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [] })
   const [status, setStatus] = useState('')
   const [loaded, setLoaded] = useState(false)
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<'all' | 'enabled' | 'denied'>('all')
 
   useEffect(() => {
     let cancelled = false
@@ -108,9 +116,9 @@ function ToolManagerSection(): ReactElement {
   const isEffectivelyDenied = (name: string): boolean => {
     if (cfg.allowNames.includes(name)) return false
     if (cfg.allowPrefixes.some((p) => name.startsWith(p))) return false
-    if (name.startsWith('mcp__')) return false
     if (cfg.denyNames.includes(name)) return true
     if (cfg.denyPrefixes.some((p) => name.startsWith(p))) return true
+    if (name.startsWith('mcp__')) return false
     return DEFAULT_THIRD_PREFIXES.some((p) => name.startsWith(p))
   }
 
@@ -119,6 +127,7 @@ function ToolManagerSection(): ReactElement {
       const next: Config = { ...prev, denyNames: [...prev.denyNames], allowNames: [...prev.allowNames] }
       if (denied) {
         if (!next.denyNames.includes(name)) next.denyNames.push(name)
+        next.allowNames = next.allowNames.filter((n) => n !== name)
       } else {
         next.denyNames = next.denyNames.filter((n) => n !== name)
         if (DEFAULT_THIRD_PREFIXES.some((p) => name.startsWith(p)) && !next.allowNames.includes(name)) {
@@ -162,6 +171,30 @@ function ToolManagerSection(): ReactElement {
     return [...map.entries()].sort((a, b) => catPriority(a[0]) - catPriority(b[0]))
   }, [tools])
 
+  const matches = (t: ToolRow): boolean => {
+    const q = query.trim().toLowerCase()
+    if (q && !t.name.toLowerCase().includes(q) && !(t.description ?? '').toLowerCase().includes(q)) return false
+    const d = isEffectivelyDenied(t.name)
+    if (filter === 'enabled' && d) return false
+    if (filter === 'denied' && !d) return false
+    return true
+  }
+
+  const matchedCount = useMemo(() => tools.filter(matches).length, [tools, query, filter, cfg])
+
+  const highlight = (text: string, q: string): ReactElement | string => {
+    if (!q) return text
+    const idx = text.toLowerCase().indexOf(q.toLowerCase())
+    if (idx < 0) return text
+    return (
+      <>
+        {text.slice(0, idx)}
+        <mark>{text.slice(idx, idx + q.length)}</mark>
+        {text.slice(idx + q.length)}
+      </>
+    )
+  }
+
   return (
     <div className="tm-page">
       <h3>工具管理（纯净预设 clean-agent）</h3>
@@ -173,26 +206,57 @@ function ToolManagerSection(): ReactElement {
         <p className="tm-hint">加载中…</p>
       ) : (
         <>
+          <div className="tm-search">
+            <input
+              className="tm-input"
+              placeholder="搜索工具名或描述…"
+              value={query}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setQuery(e.target.value)}
+            />
+            <div className="tm-filter">
+              {([
+                ['all', '全部'],
+                ['enabled', '已启用'],
+                ['denied', '已屏蔽'],
+              ] as const).map(([val, label]) => (
+                <button
+                  key={val}
+                  className={'tm-btn ghost' + (filter === val ? ' tm-active' : '')}
+                  onClick={() => setFilter(val)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="tm-count">
+            共 {tools.length} 个工具
+            {query.trim() || filter !== 'all' ? `，筛选后 ${matchedCount} 个` : ''}
+          </div>
           <div className="tm-rule">
             <label>屏蔽前缀（附加）</label>
             <PrefixInput cfg={cfg} setCfg={setCfg} />
           </div>
-          {groups.map(([cat, rows]) => (
-            <div className="tm-group" key={cat}>
-              <h4>{CATEGORY_LABEL[cat] ?? cat}</h4>
-              <div className="tm-tools">
-                {rows.map((t) => {
-                  const denied = isEffectivelyDenied(t.name)
-                  return (
-                    <label className={'tm-chip' + (denied ? ' denied' : '')} key={t.name} title={t.description || t.name}>
-                      <input type="checkbox" checked={!denied} onChange={() => toggle(t.name, !denied)} />
-                      <span className="tm-name">{t.name}</span>
-                    </label>
-                  )
-                })}
+          {groups.map(([cat, rows]) => {
+            const visible = rows.filter(matches)
+            if (visible.length === 0) return null
+            return (
+              <div className="tm-group" key={cat}>
+                <h4>{CATEGORY_LABEL[cat] ?? cat}</h4>
+                <div className="tm-tools">
+                  {visible.map((t) => {
+                    const denied = isEffectivelyDenied(t.name)
+                    return (
+                      <label className={'tm-chip' + (denied ? ' denied' : '')} key={t.name} title={t.description || t.name}>
+                        <input type="checkbox" checked={!denied} onChange={() => toggle(t.name, !denied)} />
+                        <span className="tm-name">{highlight(t.name, query.trim())}</span>
+                      </label>
+                    )
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
           <div className="tm-save-row">
             <button className="tm-btn" onClick={save}>保存配置</button>
             <button className="tm-btn ghost" onClick={reset}>恢复默认</button>
