@@ -72,6 +72,7 @@ const styles = `
 .tm-group h4{margin:0 0 6px;font-size:13px;color:var(--dsw-alias-brand-primary)}
 .tm-subgroup{margin-bottom:10px}
 .tm-subhead{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.tm-group-actions{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
 .tm-fold{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border-radius:4px;width:22px;height:22px;line-height:1;cursor:pointer;padding:0;font-size:12px;font-family:inherit;flex:0 0 auto}
 .tm-subtitle{font-size:12px;color:var(--dsw-alias-label-secondary);margin:0;font-weight:600}
 .tm-subcount{color:var(--dsw-alias-label-tertiary);font-weight:400;margin-left:6px}
@@ -269,6 +270,14 @@ function ToolManagerSection(): ReactElement {
     batchSetDenied(rows.map((t) => t.name), true)
   }
 
+  const enableGroup = (rows: ToolRow[]): void => {
+    batchSetDenied(rows.map((t) => t.name), false)
+  }
+
+  const selectGroup = (rows: ToolRow[]): void => {
+    setSelected((prev) => new Set([...prev, ...rows.map((t) => t.name)]))
+  }
+
   const highlight = (text: string, q: string): ReactElement | string => {
     if (!q) return text
     const idx = text.toLowerCase().indexOf(q.toLowerCase())
@@ -365,13 +374,29 @@ function ToolManagerSection(): ReactElement {
                         {sub.label || '全部'}
                         <span className="tm-subcount">{sub.rows.length}</span>
                       </span>
-                      <button
-                        className="tm-btn ghost tm-mini"
-                        onClick={() => disableGroup(sub.rows)}
-                        title="把该分组内所有工具设为禁用"
-                      >
-                        禁用分组
-                      </button>
+                      <div className="tm-group-actions">
+                        <button
+                          className="tm-btn ghost tm-mini"
+                          onClick={() => selectGroup(sub.rows)}
+                          title="选中该分组内所有工具（用于批量操作）"
+                        >
+                          选中分组
+                        </button>
+                        <button
+                          className="tm-btn ghost tm-mini"
+                          onClick={() => disableGroup(sub.rows)}
+                          title="把该分组内所有工具设为禁用"
+                        >
+                          禁用分组
+                        </button>
+                        <button
+                          className="tm-btn ghost tm-mini"
+                          onClick={() => enableGroup(sub.rows)}
+                          title="把该分组内所有工具设为启用"
+                        >
+                          启用分组
+                        </button>
+                      </div>
                     </div>
                     {!isCollapsed ? (
                       <div className="tm-tools">
