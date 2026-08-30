@@ -77,6 +77,9 @@ const styles = `
 .tm-subtitle{font-size:12px;color:var(--dsw-alias-label-secondary);margin:0;font-weight:600}
 .tm-subcount{color:var(--dsw-alias-label-tertiary);font-weight:400;margin-left:6px}
 .tm-btn.tm-mini{padding:2px 8px;font-size:12px}
+.tm-btn.tm-blue{background:var(--dsw-alias-state-business-primary);color:#fff;border:1px solid var(--dsw-alias-state-business-primary)}
+.tm-btn.tm-danger{background:var(--dsw-alias-state-error-primary);color:#fff;border:1px solid var(--dsw-alias-state-error-primary)}
+.tm-btn.tm-success{background:var(--dsw-alias-state-success-primary);color:#fff;border:1px solid var(--dsw-alias-state-success-primary)}
 .tm-tools{display:flex;flex-wrap:wrap;gap:6px}
 .tm-chip{display:flex;align-items:center;gap:7px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 8px;font-size:13px;background:var(--dsw-alias-bg-layer-2)}
 .tm-chip input[type=checkbox]{cursor:pointer}
@@ -275,7 +278,16 @@ function ToolManagerSection(): ReactElement {
   }
 
   const selectGroup = (rows: ToolRow[]): void => {
-    setSelected((prev) => new Set([...prev, ...rows.map((t) => t.name)]))
+    const names = rows.map((t) => t.name)
+    setSelected((prev) => {
+      const allSelected = names.length > 0 && names.every((n) => prev.has(n))
+      const next = new Set(prev)
+      for (const n of names) {
+        if (allSelected) next.delete(n)
+        else next.add(n)
+      }
+      return next
+    })
   }
 
   const highlight = (text: string, q: string): ReactElement | string => {
@@ -360,6 +372,7 @@ function ToolManagerSection(): ReactElement {
               <h4>{sec.label}</h4>
               {sec.subs.map((sub) => {
                 const isCollapsed = collapsed.has(sub.key)
+                const groupAllSelected = sub.rows.length > 0 && sub.rows.every((t) => selected.has(t.name))
                 return (
                   <div className="tm-subgroup" key={sub.key}>
                     <div className="tm-subhead">
@@ -376,21 +389,21 @@ function ToolManagerSection(): ReactElement {
                       </span>
                       <div className="tm-group-actions">
                         <button
-                          className="tm-btn ghost tm-mini"
+                          className="tm-btn tm-mini tm-blue"
                           onClick={() => selectGroup(sub.rows)}
-                          title="选中该分组内所有工具（用于批量操作）"
+                          title={groupAllSelected ? '取消选中的该分组工具' : '选中该分组内所有工具（用于批量操作）'}
                         >
-                          选中分组
+                          {groupAllSelected ? '取消选中' : '选中分组'}
                         </button>
                         <button
-                          className="tm-btn ghost tm-mini"
+                          className="tm-btn tm-mini tm-danger"
                           onClick={() => disableGroup(sub.rows)}
                           title="把该分组内所有工具设为禁用"
                         >
                           禁用分组
                         </button>
                         <button
-                          className="tm-btn ghost tm-mini"
+                          className="tm-btn tm-mini tm-success"
                           onClick={() => enableGroup(sub.rows)}
                           title="把该分组内所有工具设为启用"
                         >
