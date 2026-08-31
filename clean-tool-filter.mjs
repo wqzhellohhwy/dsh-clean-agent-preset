@@ -86,6 +86,24 @@ const DEFAULT_DENY_PREFIXES = [
 // MCP 工具默认豁免:宿主 dsh-mcp-manager 注册,是用户可控的浏览器/搜索等能力。
 const DEFAULT_ALLOW_PREFIXES = ['mcp__']
 
+// 第三方插件工具完整前缀(与 dsh-tool-manager 的 classify 一致;含预设名单外
+// 的 anysearch_ 等,用于「新增锁定」兜底判定"新工具是否属于第三方")。
+const THIRD_PREFIXES = [
+  'dev_mode_',
+  'dev_',
+  'anysearch_',
+  'memory',
+  'dtodo',
+  'skill_manage',
+  'de_',
+  'undo_',
+  'context_audit',
+  'ssh_',
+  'redteam_',
+  'describe_image',
+  'file_mount_forget',
+]
+
 /** 校验 config 项类型,返回规范化后的配置对象。 */
 function normalizeConfig(raw) {
   const source = raw === undefined ? {} : raw
@@ -127,10 +145,21 @@ function readGuiConfig() {
       allowPrefixes: Array.isArray(cfg?.allowPrefixes) ? cfg.allowPrefixes : [],
       allowNames: Array.isArray(cfg?.allowNames) ? cfg.allowNames : [],
       denyContexts: Array.isArray(cfg?.denyContexts) ? cfg.denyContexts : [],
+      allowContexts: Array.isArray(cfg?.allowContexts) ? cfg.allowContexts : [],
+      // 「新增锁定」三层默认策略:enabled=新出现的工具/上下文默认可用;disabled=默认屏蔽。
+      newDefault: {
+        context: cfg?.newDefault?.context === 'disabled' ? 'disabled' : 'enabled',
+        third: cfg?.newDefault?.third === 'disabled' ? 'disabled' : 'enabled',
+        mcp: cfg?.newDefault?.mcp === 'disabled' ? 'disabled' : 'enabled',
+      },
     }
   } catch {
     // 配置缺失/损坏时回退默认,绝不阻断装配。
-    return { denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [], denyContexts: [] }
+    return {
+      denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [],
+      denyContexts: [], allowContexts: [],
+      newDefault: { context: 'enabled', third: 'enabled', mcp: 'enabled' },
+    }
   }
 }
 
@@ -142,16 +171,19 @@ export function apply(ctx, rawConfig) {
   // 屏障 2a:全局工具层视图,动态筛选要剔除的工具名。
   // 判定优先级(高→低,与 dsh-tool-manager 的 isEffectivelyDenied 一致):
   //   allowNames > denyNames > allowPrefixes(用户) > denyPrefixes(用户)
-  //   > presetDenyPrefixes(默认第三方) > mcp__ 默认豁免。
+  //   > presetDenyPrefixes(默认第三方) > 新增锁定兜底。
   // 显式 denyNames/denyPrefixes 排在 mcp 默认豁免之前 ⇒ 用户能单独屏蔽 MCP
   // 工具,也能单独禁用一个默认屏蔽第三方分组里的单个工具(dtodo 等)。
+  // 新增锁定兜底:未命中任何显式名单的"新工具"按三层默认策略(newDefault)
+  // 决定——mcp 默认豁免(enabled)仍豁免;第三方默认不屏蔽(enabled)仍不屏蔽。
   const shouldDeny = (name) => {
     if (gui.allowNames.includes(name)) return false
     if (gui.allowPrefixes.some((p) => name.startsWith(p))) return false
     if (gui.denyNames.includes(name)) return true
     if (gui.denyPrefixes.some((p) => name.startsWith(p))) return true
     if (presetDenyPrefixes.some((p) => name.startsWith(p))) return true
-    if (DEFAULT_ALLOW_PREFIXES.some((p) => name.startsWith(p))) return false
+    if (name.startsWith('mcp__')) return gui.newDefault.mcp === 'disabled'
+    if (THIRD_PREFIXES.some((p) => name.startsWith(p))) return gui.newDefault.third === 'disabled'
     return false
   }
 
@@ -230,10 +262,20 @@ export function apply(ctx, rawConfig) {
           result = { ...result, sections: keptSections }
         }
       }
-      // 2c:剔除被 GUI 配置 denyContexts 禁用的动态上下文(sandbox:policy /
-      // approval:policy / memory:snapshot / dsh-super-injector 等)。
-      if (Array.isArray(assembled.contexts) && gui.denyContexts.length > 0) {
-        const keptContexts = assembled.contexts.filter((c) => !gui.denyContexts.includes(c?.name))
+      // 2c:过滤动态上下文(sandbox:policy / approval:policy / memory:snapshot /
+      // dsh-super-injector 等)。判定优先级:
+      //   allowContexts(用户显式启用) > denyContexts(用户显式禁用)
+      //   > 新增锁定(默认 enabled=注入;disabled=不在名单的上下文默认剔除)。
+      if (Array.isArray(assembled.contexts)) {
+        const ndContext = gui.newDefault.context
+        const keptContexts = assembled.contexts.filter((c) => {
+          const nm = c && c.name
+          if (typeof nm !== 'string') return true
+          if (gui.allowContexts.includes(nm)) return true
+          if (gui.denyContexts.includes(nm)) return false
+          if (ndContext === 'disabled') return false
+          return true
+        })
         if (keptContexts.length !== assembled.contexts.length) {
           result = { ...result, contexts: keptContexts }
         }
