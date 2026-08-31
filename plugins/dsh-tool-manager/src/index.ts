@@ -60,15 +60,50 @@ function configFile(): string {
   return join(dshHome(), 'tool-manager.json')
 }
 
+type LockState = 'enabled' | 'disabled'
+
+interface NewDefault {
+  context: LockState
+  third: LockState
+  mcp: LockState
+}
+
+/** 保存的命名配置(不含 newDefault——「新增锁定」状态不随配置保存/切换)。 */
+interface SavedConfig {
+  id: string
+  name: string
+  savedAt: string
+  state: {
+    denyPrefixes: string[]
+    denyNames: string[]
+    allowPrefixes: string[]
+    allowNames: string[]
+    denyContexts: string[]
+    allowContexts: string[]
+  }
+}
+
 interface Config {
   denyPrefixes: string[]
   denyNames: string[]
   allowPrefixes: string[]
   allowNames: string[]
   denyContexts: string[]
+  allowContexts: string[]
+  newDefault: NewDefault
+  configs: SavedConfig[]
 }
 
-const EMPTY: Config = { denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [], denyContexts: [] }
+const EMPTY: Config = {
+  denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [],
+  denyContexts: [], allowContexts: [],
+  newDefault: { context: 'enabled', third: 'enabled', mcp: 'enabled' },
+  configs: [],
+}
+
+function lockOf(v: unknown): LockState {
+  return v === 'disabled' ? 'disabled' : 'enabled'
+}
 
 function readConfig(): Config {
   try {
@@ -81,6 +116,13 @@ function readConfig(): Config {
       allowPrefixes: Array.isArray(cfg?.allowPrefixes) ? cfg.allowPrefixes : [],
       allowNames: Array.isArray(cfg?.allowNames) ? cfg.allowNames : [],
       denyContexts: Array.isArray(cfg?.denyContexts) ? cfg.denyContexts : [],
+      allowContexts: Array.isArray(cfg?.allowContexts) ? cfg.allowContexts : [],
+      newDefault: {
+        context: lockOf(cfg?.newDefault?.context),
+        third: lockOf(cfg?.newDefault?.third),
+        mcp: lockOf(cfg?.newDefault?.mcp),
+      },
+      configs: Array.isArray(cfg?.configs) ? cfg.configs : [],
     }
   } catch {
     return { ...EMPTY }
@@ -104,7 +146,7 @@ function classify(name: string): string {
   if (name.startsWith('dev_') || name.startsWith('memory') || name.startsWith('dtodo')
     || name.startsWith('skill_manage') || name.startsWith('undo_') || name.startsWith('redteam_')
     || name.startsWith('ssh_') || name.startsWith('context_audit') || name.startsWith('describe_image')
-    || name.startsWith('de_') || name.startsWith('anysearch_')) return 'third'
+    || name.startsWith('de_') || name.startsWith('anysearch_') || name.startsWith('file_mount_forget')) return 'third'
   return 'native'
 }
 
@@ -122,6 +164,7 @@ const THIRD_PLUGIN_MAP: Array<[string, string]> = [
   ['ssh_', 'ssh'],
   ['redteam_', 'redteam'],
   ['describe_image', 'describe-image'],
+  ['file_mount_forget', 'dsh-file-mount'],
 ]
 
 // 计算工具的分组键:mcp 按 server 名、third 按归属插件、其余按 category。
@@ -211,6 +254,13 @@ export function apply(ctx: AppContext): void {
             allowPrefixes: Array.isArray(body?.allowPrefixes) ? body.allowPrefixes : [],
             allowNames: Array.isArray(body?.allowNames) ? body.allowNames : [],
             denyContexts: Array.isArray(body?.denyContexts) ? body.denyContexts : [],
+            allowContexts: Array.isArray(body?.allowContexts) ? body.allowContexts : [],
+            newDefault: {
+              context: lockOf(body?.newDefault?.context),
+              third: lockOf(body?.newDefault?.third),
+              mcp: lockOf(body?.newDefault?.mcp),
+            },
+            configs: Array.isArray(body?.configs) ? body.configs : [],
           }
           const ok = writeConfig(next)
           return json(res, ok ? 200 : 500, { ok, config: ok ? next : readConfig() })

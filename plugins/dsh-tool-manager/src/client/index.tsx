@@ -41,13 +41,57 @@ interface Config {
   allowPrefixes: string[]
   allowNames: string[]
   denyContexts: string[]
+  allowContexts: string[]
+  newDefault: NewDefault
+  configs: SavedConfig[]
+}
+
+type LockState = 'enabled' | 'disabled'
+type LockCat = 'context' | 'third' | 'mcp'
+
+interface NewDefault {
+  context: LockState
+  third: LockState
+  mcp: LockState
+}
+
+/** 保存的命名配置(不含 newDefault——「新增锁定」状态不随配置保存/切换)。 */
+interface SavedConfig {
+  id: string
+  name: string
+  savedAt: string
+  state: {
+    denyPrefixes: string[]
+    denyNames: string[]
+    allowPrefixes: string[]
+    allowNames: string[]
+    denyContexts: string[]
+    allowContexts: string[]
+  }
+}
+
+const EMPTY_CONFIG: Config = {
+  denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [],
+  denyContexts: [], allowContexts: [],
+  newDefault: { context: 'enabled', third: 'enabled', mcp: 'enabled' },
+  configs: [],
 }
 
 // 与 clean-tool-filter.mjs 默认名单一致(anysearch_ 已移出默认屏蔽)。
 const DEFAULT_THIRD_PREFIXES = [
   'dev_', 'memory', 'dtodo', 'skill_manage', 'undo_', 'redteam_',
-  'ssh_', 'context_audit', 'describe_image', 'de_',
+  'ssh_', 'context_audit', 'describe_image', 'de_', 'file_mount_forget',
 ]
+
+// 第三方插件工具完整前缀(与 host classify 一致,含预设名单外的 anysearch_ 等,
+// 用于「新增锁定」对名单外第三方工具的兜底判定)。
+const THIRD_PREFIXES = [
+  'dev_mode_', 'dev_', 'anysearch_', 'memory', 'dtodo', 'skill_manage',
+  'de_', 'undo_', 'context_audit', 'ssh_', 'redteam_', 'describe_image',
+  'file_mount_forget',
+]
+
+const LOCK_ICON: Record<LockState, string> = { enabled: '🟢', disabled: '🔴' }
 
 const CATEGORY_LABEL: Record<string, string> = {
   mcp: 'MCP 工具（默认启用）',
@@ -106,11 +150,20 @@ const styles = `
 .tm-btn.tm-active{background:var(--dsw-alias-state-business-primary);color:#fff;border-color:var(--dsw-alias-state-business-primary)}
 .tm-count{font-size:12px;color:var(--dsw-alias-label-tertiary);margin:0}
 .tm-name mark{background:transparent;color:var(--dsw-alias-brand-primary);font-weight:600}
+.tm-h4-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tm-lock{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border-radius:6px;padding:2px 8px;font-size:12px;cursor:pointer;font-family:inherit}
+.tm-lock.off{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}
+.tm-config{flex-direction:column;align-items:stretch}
+.tm-config-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.tm-config-list{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.tm-config-chip{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer;font-family:inherit}
+.tm-config-chip.sel{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary) inset;color:var(--dsw-alias-brand-primary)}
+.tm-config-edit{display:inline-flex;gap:6px;align-items:center}
 `
 
 function ToolManagerSection(): ReactElement {
   const [tools, setTools] = useState<ToolRow[]>([])
-  const [cfg, setCfg] = useState<Config>({ denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [], denyContexts: [] })
+  const [cfg, setCfg] = useState<Config>(EMPTY_CONFIG)
   const [status, setStatus] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [query, setQuery] = useState('')
@@ -118,6 +171,9 @@ function ToolManagerSection(): ReactElement {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [contextNames, setContextNames] = useState<string[]>([])
+  const [selectedConfigId, setSelectedConfigId] = useState<string | null>(null)
+  const [cfgEdit, setCfgEdit] = useState<null | 'save' | 'rename'>(null)
+  const [cfgNameInput, setCfgNameInput] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -128,7 +184,7 @@ function ToolManagerSection(): ReactElement {
         if (cancelled) return
         setTools((body?.tools ?? []) as ToolRow[])
         setContextNames((body?.contexts ?? []) as string[])
-        setCfg((body?.config ?? { denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [], denyContexts: [] }) as Config)
+        setCfg((body?.config ?? EMPTY_CONFIG) as Config)
       } catch (e) {
         if (!cancelled) setStatus('⚠️ 无法连接 host API（/tool-manager/api）：' + String(e))
       } finally {
@@ -150,8 +206,10 @@ function ToolManagerSection(): ReactElement {
     if (cfg.allowPrefixes.some((p) => name.startsWith(p))) return false
     if (cfg.denyNames.includes(name)) return true
     if (cfg.denyPrefixes.some((p) => name.startsWith(p))) return true
-    if (name.startsWith('mcp__')) return false
-    return DEFAULT_THIRD_PREFIXES.some((p) => name.startsWith(p))
+    if (DEFAULT_THIRD_PREFIXES.some((p) => name.startsWith(p))) return true
+    if (name.startsWith('mcp__')) return cfg.newDefault.mcp === 'disabled'
+    if (THIRD_PREFIXES.some((p) => name.startsWith(p))) return cfg.newDefault.third === 'disabled'
+    return false
   }
 
   // 把单个工具设为启用/禁用,返回新 Config(双向清理 allow/deny 名单,避免残留复活)。
@@ -210,7 +268,7 @@ function ToolManagerSection(): ReactElement {
 
   const reset = (): void => {
     setSelected(new Set())
-    commit({ denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [], denyContexts: [] })
+    commit({ ...EMPTY_CONFIG, newDefault: cfg.newDefault, configs: cfg.configs })
   }
 
   const matches = (t: ToolRow): boolean => {
@@ -277,19 +335,21 @@ function ToolManagerSection(): ReactElement {
     })
   }
 
-  // 上下文注入的纯函数式禁用/启用(denyContexts)。
+  // 上下文注入的纯函数式禁用/启用(denyContexts + allowContexts 双向清理)。
   const applyContextDeny = (cfg0: Config, name: string, denied: boolean): Config => {
-    const next: Config = { ...cfg0, denyContexts: [...cfg0.denyContexts] }
+    const next: Config = { ...cfg0, denyContexts: [...cfg0.denyContexts], allowContexts: [...cfg0.allowContexts] }
     if (denied) {
       if (!next.denyContexts.includes(name)) next.denyContexts.push(name)
+      next.allowContexts = next.allowContexts.filter((n) => n !== name)
     } else {
       next.denyContexts = next.denyContexts.filter((n) => n !== name)
+      if (!next.allowContexts.includes(name)) next.allowContexts.push(name)
     }
     return next
   }
 
   const toggleContext = (name: string): void => {
-    commit(applyContextDeny(cfg, name, !cfg.denyContexts.includes(name)))
+    commit(applyContextDeny(cfg, name, contextEnabled(name)))
   }
 
   const selectAllContexts = (): void => {
@@ -305,11 +365,83 @@ function ToolManagerSection(): ReactElement {
   }
 
   const enableAllContexts = (): void => {
-    commit({ ...cfg, denyContexts: [] })
+    commit({ ...cfg, denyContexts: [], allowContexts: [...contextNames] })
   }
 
   const disableAllContexts = (): void => {
-    commit({ ...cfg, denyContexts: [...contextNames] })
+    commit({ ...cfg, denyContexts: [...contextNames], allowContexts: [] })
+  }
+
+  /** 上下文是否实际启用:显式启用 > 显式禁用 > 新增锁定默认。 */
+  const contextEnabled = (name: string): boolean => {
+    if (cfg.allowContexts.includes(name)) return true
+    if (cfg.denyContexts.includes(name)) return false
+    return cfg.newDefault.context !== 'disabled'
+  }
+
+  /** 切换某层的「新增锁定」:enabled=新出现的内容默认可用,disabled=默认屏蔽。 */
+  const toggleNewDefault = (cat: LockCat): void => {
+    const next: LockState = cfg.newDefault[cat] === 'enabled' ? 'disabled' : 'enabled'
+    commit({ ...cfg, newDefault: { ...cfg.newDefault, [cat]: next } })
+  }
+
+  // ── 命名配置(保存/启用/重命名/删除) ─────────────────────────────
+  const saveAsConfig = (): void => {
+    setCfgEdit('save')
+    setCfgNameInput('')
+  }
+
+  const startRenameConfig = (): void => {
+    if (!selectedConfigId) return
+    const cur = cfg.configs.find((c) => c.id === selectedConfigId)
+    setCfgEdit('rename')
+    setCfgNameInput(cur ? cur.name : '')
+  }
+
+  const submitCfgEdit = (): void => {
+    const name = cfgNameInput.trim()
+    if (!name || !cfgEdit) return
+    if (cfgEdit === 'save') {
+      const saved: SavedConfig = {
+        id: 'cfg-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        name,
+        savedAt: new Date().toISOString(),
+        state: {
+          denyPrefixes: [...cfg.denyPrefixes],
+          denyNames: [...cfg.denyNames],
+          allowPrefixes: [...cfg.allowPrefixes],
+          allowNames: [...cfg.allowNames],
+          denyContexts: [...cfg.denyContexts],
+          allowContexts: [...cfg.allowContexts],
+        },
+      }
+      commit({ ...cfg, configs: [...cfg.configs, saved] })
+      setSelectedConfigId(saved.id)
+    } else if (cfgEdit === 'rename' && selectedConfigId) {
+      commit({ ...cfg, configs: cfg.configs.map((c) => (c.id === selectedConfigId ? { ...c, name } : c)) })
+    }
+    setCfgEdit(null)
+    setCfgNameInput('')
+  }
+
+  const applySavedConfig = (saved: SavedConfig): void => {
+    commit({
+      ...cfg,
+      denyPrefixes: [...saved.state.denyPrefixes],
+      denyNames: [...saved.state.denyNames],
+      allowPrefixes: [...saved.state.allowPrefixes],
+      allowNames: [...saved.state.allowNames],
+      denyContexts: [...saved.state.denyContexts],
+      allowContexts: [...saved.state.allowContexts],
+      // newDefault(新增锁定)不随配置切换
+    })
+    setStatus('✅ 已启用配置「' + saved.name + '」，新会话生效')
+  }
+
+  const deleteSavedConfig = (): void => {
+    if (!selectedConfigId) return
+    commit({ ...cfg, configs: cfg.configs.filter((c) => c.id !== selectedConfigId) })
+    setSelectedConfigId(null)
   }
 
   // 批量启用/禁用「选中」:工具走 denyNames、上下文走 denyContexts。
@@ -434,6 +566,58 @@ function ToolManagerSection(): ReactElement {
             <button className="tm-btn tm-danger" onClick={() => setSelectedDenied(true)} disabled={selected.size === 0}>
               禁用选中
             </button>
+            <button className="tm-btn ghost" onClick={saveAsConfig} title="把当前工具/上下文启用状态保存为命名配置（不含新增锁定状态）">
+              保存为配置
+            </button>
+          </div>
+
+          <div className="tm-batch tm-config">
+            <div className="tm-config-actions">
+              <span className="tm-label">配置</span>
+              <button
+                className="tm-btn tm-mini tm-success"
+                disabled={!selectedConfigId}
+                onClick={() => {
+                  const s = cfg.configs.find((c) => c.id === selectedConfigId)
+                  if (s) applySavedConfig(s)
+                }}
+                title="把当前工具状态切换为所选配置保存的状态"
+              >
+                启用
+              </button>
+              <button className="tm-btn tm-mini tm-blue" disabled={!selectedConfigId} onClick={startRenameConfig} title="重命名所选配置">重命名</button>
+              <button className="tm-btn tm-mini tm-danger" disabled={!selectedConfigId} onClick={deleteSavedConfig} title="删除所选配置">删除</button>
+            </div>
+            <div className="tm-config-list">
+              {cfg.configs.length === 0 ? (
+                <span className="tm-hint">暂无保存的配置：点击上方「保存为配置」保存当前状态</span>
+              ) : (
+                cfg.configs.map((c) => (
+                  <button
+                    key={c.id}
+                    className={'tm-config-chip' + (selectedConfigId === c.id ? ' sel' : '')}
+                    onClick={() => setSelectedConfigId(c.id)}
+                    title={c.name + '（' + new Date(c.savedAt).toLocaleString() + '）'}
+                  >
+                    {c.name}
+                  </button>
+                ))
+              )}
+              {cfgEdit ? (
+                <span className="tm-config-edit">
+                  <input
+                    className="tm-input"
+                    placeholder={cfgEdit === 'save' ? '配置名称…' : '新名称…'}
+                    value={cfgNameInput}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setCfgNameInput(e.target.value)}
+                    onKeyDown={(e: KeyboardEvent) => { if (e.key === 'Enter') submitCfgEdit() }}
+                    autoFocus
+                  />
+                  <button className="tm-btn ghost" onClick={submitCfgEdit}>确定</button>
+                  <button className="tm-btn danger" onClick={() => setCfgEdit(null)}>取消</button>
+                </span>
+              ) : null}
+            </div>
           </div>
 
           <div className="tm-batch tm-rows">
@@ -442,18 +626,39 @@ function ToolManagerSection(): ReactElement {
               <button className="tm-btn tm-mini tm-blue" onClick={selectAllContexts}>一键选中</button>
               <button className="tm-btn tm-mini tm-success" onClick={enableAllContexts}>一键启用</button>
               <button className="tm-btn tm-mini tm-danger" onClick={disableAllContexts}>一键禁用</button>
+              <button
+                className={'tm-lock' + (cfg.newDefault.context === 'disabled' ? ' off' : '')}
+                onClick={() => toggleNewDefault('context')}
+                title={'新增锁定：新出现的上下文注入默认' + (cfg.newDefault.context === 'enabled' ? '启用' : '禁用')}
+              >
+                {LOCK_ICON[cfg.newDefault.context]} 新增{cfg.newDefault.context === 'enabled' ? '启用' : '禁用'}
+              </button>
             </div>
             <div className="tm-batch-row">
               <span className="tm-label">第三方</span>
               <button className="tm-btn tm-mini tm-blue" onClick={() => selectCategory('third')}>一键选中</button>
               <button className="tm-btn tm-mini tm-success" onClick={() => enableCategory('third')}>一键启用</button>
               <button className="tm-btn tm-mini tm-danger" onClick={() => disableCategory('third')}>一键禁用</button>
+              <button
+                className={'tm-lock' + (cfg.newDefault.third === 'disabled' ? ' off' : '')}
+                onClick={() => toggleNewDefault('third')}
+                title={'新增锁定：新出现的第三方插件工具默认' + (cfg.newDefault.third === 'enabled' ? '启用' : '禁用')}
+              >
+                {LOCK_ICON[cfg.newDefault.third]} 新增{cfg.newDefault.third === 'enabled' ? '启用' : '禁用'}
+              </button>
             </div>
             <div className="tm-batch-row">
               <span className="tm-label">MCP</span>
               <button className="tm-btn tm-mini tm-blue" onClick={() => selectCategory('mcp')}>一键选中</button>
               <button className="tm-btn tm-mini tm-success" onClick={() => enableCategory('mcp')}>一键启用</button>
               <button className="tm-btn tm-mini tm-danger" onClick={() => disableCategory('mcp')}>一键禁用</button>
+              <button
+                className={'tm-lock' + (cfg.newDefault.mcp === 'disabled' ? ' off' : '')}
+                onClick={() => toggleNewDefault('mcp')}
+                title={'新增锁定：新出现的 MCP 工具默认' + (cfg.newDefault.mcp === 'enabled' ? '启用' : '禁用')}
+              >
+                {LOCK_ICON[cfg.newDefault.mcp]} 新增{cfg.newDefault.mcp === 'enabled' ? '启用' : '禁用'}
+              </button>
             </div>
           </div>
 
@@ -461,6 +666,50 @@ function ToolManagerSection(): ReactElement {
             <label>屏蔽前缀（附加）</label>
             <PrefixInput cfg={cfg} commit={commit} />
           </div>
+
+          {contextNames.length > 0 ? (
+            <div className="tm-group">
+              <h4>上下文注入（动态上下文）</h4>
+              <div className="tm-subgroup">
+                <div className="tm-subhead">
+                  <span className="tm-subtitle">
+                    共 {contextNames.length} 项
+                    <span className="tm-subcount"></span>
+                  </span>
+                  <div className="tm-group-actions">
+                    <button className="tm-btn tm-mini tm-blue" onClick={selectAllContexts}>选中分组</button>
+                    <button className="tm-btn tm-mini tm-success" onClick={enableAllContexts}>全部启用</button>
+                    <button className="tm-btn tm-mini tm-danger" onClick={disableAllContexts}>全部禁用</button>
+                  </div>
+                </div>
+                <div className="tm-tools">
+                  {contextNames.map((name) => {
+                    const enabled = contextEnabled(name)
+                    const sel = selected.has(name)
+                    return (
+                      <div
+                        className={'tm-chip' + (!enabled ? ' denied' : '') + (sel ? ' selected' : '')}
+                        key={name}
+                        title={'动态上下文：' + name + (enabled ? '（已注入）' : '（已禁用注入）')}
+                      >
+                        <input type="checkbox" checked={sel} onChange={() => toggleSelect(name)} title="选中（用于批量操作）" />
+                        <span className="tm-name">{name}</span>
+                        <button
+                          className={'tm-switch' + (enabled ? ' on' : ' off')}
+                          role="switch"
+                          aria-checked={enabled}
+                          onClick={() => toggleContext(name)}
+                          title={enabled ? '点击禁用注入' : '点击启用注入'}
+                        >
+                          {enabled ? '启用' : '禁用'}
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {sections.map((sec) => (
             <Fragment key={sec.cat}>
@@ -543,49 +792,6 @@ function ToolManagerSection(): ReactElement {
                 )
               })}
             </div>
-              {sec.cat === 'native' && contextNames.length > 0 ? (
-                <div className="tm-group">
-                  <h4>上下文注入（动态上下文）</h4>
-                  <div className="tm-subgroup">
-                    <div className="tm-subhead">
-                      <span className="tm-subtitle">
-                        共 {contextNames.length} 项
-                        <span className="tm-subcount"></span>
-                      </span>
-                      <div className="tm-group-actions">
-                        <button className="tm-btn tm-mini tm-blue" onClick={selectAllContexts}>选中分组</button>
-                        <button className="tm-btn tm-mini tm-success" onClick={enableAllContexts}>全部启用</button>
-                        <button className="tm-btn tm-mini tm-danger" onClick={disableAllContexts}>全部禁用</button>
-                      </div>
-                    </div>
-                    <div className="tm-tools">
-                      {contextNames.map((name) => {
-                        const enabled = !cfg.denyContexts.includes(name)
-                        const sel = selected.has(name)
-                        return (
-                          <div
-                            className={'tm-chip' + (!enabled ? ' denied' : '') + (sel ? ' selected' : '')}
-                            key={name}
-                            title={'动态上下文：' + name + (enabled ? '（已注入）' : '（已禁用注入）')}
-                          >
-                            <input type="checkbox" checked={sel} onChange={() => toggleSelect(name)} title="选中（用于批量操作）" />
-                            <span className="tm-name">{name}</span>
-                            <button
-                              className={'tm-switch' + (enabled ? ' on' : ' off')}
-                              role="switch"
-                              aria-checked={enabled}
-                              onClick={() => toggleContext(name)}
-                              title={enabled ? '点击禁用注入' : '点击启用注入'}
-                            >
-                              {enabled ? '启用' : '禁用'}
-                            </button>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
             </Fragment>
           ))}
 
