@@ -511,18 +511,18 @@ function ToolManagerSection(): ReactElement {
                           {groupAllSelected ? '取消选中' : '选中分组'}
                         </button>
                         <button
-                          className="tm-btn tm-mini tm-danger"
-                          onClick={() => disableGroup(sub.rows)}
-                          title="把该分组内所有工具设为禁用"
-                        >
-                          禁用分组
-                        </button>
-                        <button
                           className="tm-btn tm-mini tm-success"
                           onClick={() => enableGroup(sub.rows)}
                           title="把该分组内所有工具设为启用"
                         >
                           启用分组
+                        </button>
+                        <button
+                          className="tm-btn tm-mini tm-danger"
+                          onClick={() => disableGroup(sub.rows)}
+                          title="把该分组内所有工具设为禁用"
+                        >
+                          禁用分组
                         </button>
                       </div>
                     </div>
