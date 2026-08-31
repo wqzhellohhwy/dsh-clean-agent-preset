@@ -123,10 +123,11 @@ function readGuiConfig() {
       denyNames: Array.isArray(cfg?.denyNames) ? cfg.denyNames : [],
       allowPrefixes: Array.isArray(cfg?.allowPrefixes) ? cfg.allowPrefixes : [],
       allowNames: Array.isArray(cfg?.allowNames) ? cfg.allowNames : [],
+      allowSections: Array.isArray(cfg?.allowSections) ? cfg.allowSections : [],
     }
   } catch {
     // 配置缺失/损坏时回退默认,绝不阻断装配。
-    return { denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [] }
+    return { denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [], allowSections: [] }
   }
 }
 
@@ -176,8 +177,9 @@ export function apply(ctx, rawConfig) {
         const name = typeof section?.name === 'string' ? section.name : ''
         if (!name.startsWith('tool:')) return true // 非 tool: section(官方 harness:/app:/deployment:/ui:)保留
         // 官方工具 section 名是纯功能词(无连字符),保留;第三方插件 section
-        // 名是插件名(含连字符,如 dsh-undo-savepoint),剔除。
-        return name.indexOf('-', 'tool:'.length) === -1
+        // 名是插件名(含连字符,如 dsh-undo-savepoint),默认剔除,仅当 GUI
+        // 配置 allowSections 显式豁免时才保留(「注入上下文管理」)。
+        return name.indexOf('-', 'tool:'.length) === -1 || gui.allowSections.includes(name)
       })
       if (kept.length === assembled.sections.length) return assembled
       return { ...assembled, sections: kept }

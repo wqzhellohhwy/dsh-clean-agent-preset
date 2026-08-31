@@ -40,6 +40,7 @@ interface Config {
   denyNames: string[]
   allowPrefixes: string[]
   allowNames: string[]
+  allowSections: string[]
 }
 
 // 与 clean-tool-filter.mjs 默认名单一致(anysearch_ 已移出默认屏蔽)。
@@ -88,11 +89,13 @@ const styles = `
 .tm-chip.selected{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary) inset}
 .tm-name{color:var(--dsw-alias-label-primary);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tm-switch{border:none;border-radius:999px;padding:2px 10px;cursor:pointer;font-size:12px;font-family:inherit;line-height:1.5;white-space:nowrap}
-.tm-switch.on{background:var(--dsw-alias-state-success-primary);color:#fff}
-.tm-switch.off{background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary)}
+.tm-switch.on{background:#16a34a;color:#fff}
+.tm-switch.off{background:#6b7280;color:#fff}
 .tm-batch{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;padding:8px 10px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px}
 .tm-batch.tm-sticky{position:sticky;top:8px;z-index:30;box-shadow:0 2px 10px rgba(0,0,0,.18)}
-.tm-label{font-size:12px;color:var(--dsw-alias-label-tertiary)}
+.tm-label{font-size:12px;color:var(--dsw-alias-label-tertiary);min-width:44px}
+.tm-batch.tm-rows{flex-direction:column;align-items:stretch}
+.tm-batch-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .tm-save-row{display:flex;gap:8px;align-items:center;margin-top:12px}
 .tm-status{font-size:13px;color:var(--dsw-alias-state-success-primary)}
 .tm-status.err{color:var(--dsw-alias-state-error-primary)}
@@ -107,13 +110,15 @@ const styles = `
 
 function ToolManagerSection(): ReactElement {
   const [tools, setTools] = useState<ToolRow[]>([])
-  const [cfg, setCfg] = useState<Config>({ denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [] })
+  const [cfg, setCfg] = useState<Config>({ denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [], allowSections: [] })
   const [status, setStatus] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<'all' | 'enabled' | 'denied'>('all')
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [selectedSections, setSelectedSections] = useState<Set<string>>(new Set())
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [sectionNames, setSectionNames] = useState<string[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -123,7 +128,8 @@ function ToolManagerSection(): ReactElement {
         const body = await res.json()
         if (cancelled) return
         setTools((body?.tools ?? []) as ToolRow[])
-        setCfg((body?.config ?? { denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [] }) as Config)
+        setSectionNames((body?.sections ?? []) as string[])
+        setCfg((body?.config ?? { denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [], allowSections: [] }) as Config)
       } catch (e) {
         if (!cancelled) setStatus('⚠️ 无法连接 host API（/tool-manager/api）：' + String(e))
       } finally {
@@ -205,7 +211,8 @@ function ToolManagerSection(): ReactElement {
 
   const reset = (): void => {
     setSelected(new Set())
-    commit({ denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [] })
+    setSelectedSections(new Set())
+    commit({ denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [], allowSections: [] })
   }
 
   const matches = (t: ToolRow): boolean => {
@@ -266,10 +273,48 @@ function ToolManagerSection(): ReactElement {
     })
   }
 
-  const selectDisableCategory = (cat: 'mcp' | 'third'): void => {
-    const names = tools.filter((t) => t.category === cat).map((t) => t.name)
-    setSelected((prev) => new Set([...prev, ...names]))
-    batchSetDenied(names, true)
+  const toggleSection = (name: string): void => {
+    commit({
+      ...cfg,
+      allowSections: cfg.allowSections.includes(name)
+        ? cfg.allowSections.filter((s) => s !== name)
+        : [...cfg.allowSections, name],
+    })
+  }
+
+  const toggleSelectSection = (name: string): void => {
+    setSelectedSections((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  const selectAllSections = (): void => {
+    setSelectedSections((prev) => (prev.size === sectionNames.length && sectionNames.length > 0 ? new Set<string>() : new Set(sectionNames)))
+  }
+
+  const enableAllSections = (): void => {
+    commit({ ...cfg, allowSections: [...sectionNames] })
+  }
+
+  const disableAllSections = (): void => {
+    commit({ ...cfg, allowSections: [] })
+  }
+
+  const toolsOfCategory = (cat: 'mcp' | 'third'): string[] => tools.filter((t) => t.category === cat).map((t) => t.name)
+
+  const selectCategory = (cat: 'mcp' | 'third'): void => {
+    setSelected((prev) => new Set([...prev, ...toolsOfCategory(cat)]))
+  }
+
+  const enableCategory = (cat: 'mcp' | 'third'): void => {
+    batchSetDenied(toolsOfCategory(cat), false)
+  }
+
+  const disableCategory = (cat: 'mcp' | 'third'): void => {
+    batchSetDenied(toolsOfCategory(cat), true)
   }
 
   const toggleCollapse = (key: string): void => {
@@ -367,14 +412,25 @@ function ToolManagerSection(): ReactElement {
             </button>
           </div>
 
-          <div className="tm-batch">
-            <span className="tm-label">一键禁用</span>
-            <button className="tm-btn ghost" onClick={() => selectDisableCategory('mcp')}>
-              选中并禁用所有 MCP
-            </button>
-            <button className="tm-btn ghost" onClick={() => selectDisableCategory('third')}>
-              选中并禁用所有第三方
-            </button>
+          <div className="tm-batch tm-rows">
+            <div className="tm-batch-row">
+              <span className="tm-label">上下文</span>
+              <button className="tm-btn tm-mini tm-blue" onClick={selectAllSections}>选中</button>
+              <button className="tm-btn tm-mini tm-success" onClick={enableAllSections}>启用</button>
+              <button className="tm-btn tm-mini tm-danger" onClick={disableAllSections}>禁用</button>
+            </div>
+            <div className="tm-batch-row">
+              <span className="tm-label">MCP</span>
+              <button className="tm-btn tm-mini tm-blue" onClick={() => selectCategory('mcp')}>选中</button>
+              <button className="tm-btn tm-mini tm-success" onClick={() => enableCategory('mcp')}>启用</button>
+              <button className="tm-btn tm-mini tm-danger" onClick={() => disableCategory('mcp')}>禁用</button>
+            </div>
+            <div className="tm-batch-row">
+              <span className="tm-label">第三方</span>
+              <button className="tm-btn tm-mini tm-blue" onClick={() => selectCategory('third')}>选中</button>
+              <button className="tm-btn tm-mini tm-success" onClick={() => enableCategory('third')}>启用</button>
+              <button className="tm-btn tm-mini tm-danger" onClick={() => disableCategory('third')}>禁用</button>
+            </div>
           </div>
 
           <div className="tm-rule">
@@ -464,6 +520,50 @@ function ToolManagerSection(): ReactElement {
             </div>
           ))}
 
+          {sectionNames.length > 0 ? (
+            <div className="tm-group">
+              <h4>第三方上下文注入（提示词 section）</h4>
+              <div className="tm-subgroup">
+                <div className="tm-subhead">
+                  <span className="tm-subtitle">
+                    共 {sectionNames.length} 项
+                    <span className="tm-subcount"></span>
+                  </span>
+                  <div className="tm-group-actions">
+                    <button className="tm-btn tm-mini tm-blue" onClick={selectAllSections}>选中分组</button>
+                    <button className="tm-btn tm-mini tm-success" onClick={enableAllSections}>全部启用</button>
+                    <button className="tm-btn tm-mini tm-danger" onClick={disableAllSections}>全部禁用</button>
+                  </div>
+                </div>
+                <div className="tm-tools">
+                  {sectionNames.map((name) => {
+                    const enabled = cfg.allowSections.includes(name)
+                    const sel = selectedSections.has(name)
+                    return (
+                      <div
+                        className={'tm-chip' + (!enabled ? ' denied' : '') + (sel ? ' selected' : '')}
+                        key={name}
+                        title={'提示词 section：' + name + (enabled ? '（已注入）' : '（已禁用注入）')}
+                      >
+                        <input type="checkbox" checked={sel} onChange={() => toggleSelectSection(name)} title="选中（用于批量操作）" />
+                        <span className="tm-name">{name}</span>
+                        <button
+                          className={'tm-switch' + (enabled ? ' on' : ' off')}
+                          role="switch"
+                          aria-checked={enabled}
+                          onClick={() => toggleSection(name)}
+                          title={enabled ? '点击禁用注入' : '点击启用注入'}
+                        >
+                          {enabled ? '启用' : '禁用'}
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           <div className="tm-save-row">
             <button className="tm-btn ghost" onClick={reset}>恢复默认</button>
             {status ? (
@@ -471,7 +571,7 @@ function ToolManagerSection(): ReactElement {
             ) : null}
           </div>
           <div className="tm-hint">
-            提示：启用/禁用即时自动保存，通过工具名前缀或精确名生效；「禁用分组 / 禁用选中 / 一键禁用」只写纯净预设屏蔽名单（denyNames），不关闭 MCP/插件服务本身。修改后请新建 clean-agent 会话验证工具面。
+            提示：启用/禁用即时自动保存；工具通过前缀/精确名 deny 名单生效，「上下文注入」通过 allowSections 豁免名单生效（默认全禁用第三方 section）。所有操作只写纯净预设配置，不关闭 MCP/插件服务本身。修改后请新建 clean-agent 会话验证。
             配置文件：$DSH_HOME/.dsh/tool-manager.json
           </div>
         </>
