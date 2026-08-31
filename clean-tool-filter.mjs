@@ -45,7 +45,8 @@
  * 否则修改本文件不会在重挂载时生效。
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, watch } from 'node:fs'
+import { dirname, basename } from 'node:path'
 
 export const name = 'clean-tool-filter'
 export const inject = ['tools']
@@ -134,7 +135,7 @@ function readGuiConfig() {
 export function apply(ctx, rawConfig) {
   const config = normalizeConfig(rawConfig)
   const { scopeId, denyPrefixes: presetDenyPrefixes, filterSections } = config
-  const gui = readGuiConfig()
+  let gui = readGuiConfig()
 
   // 屏障 2a:全局工具层视图,动态筛选要剔除的工具名。
   // 判定优先级(高→低,与 dsh-tool-manager 的 isEffectivelyDenied 一致):
@@ -160,9 +161,11 @@ export function apply(ctx, rawConfig) {
     let lastDenyKey = null
     const rebuild = () => {
       try {
+        // 每次重建都重新读 GUI 配置,让「工具管理」页的改动即时生效,无需重启 dsh。
+        gui = readGuiConfig()
         const globalView = ctx.tools.view(undefined)
-        const deny = [...globalView.restrictableNames].filter((name) => shouldDeny(name))
-        const key = deny.join('\u0001')
+        const deny = [...globalView.restrictableNames].filter((name) => shouldDeny(name)).sort()
+        const key = deny.join('\u0001') + '\u0002' + JSON.stringify(gui)
         // restrict() 本身会触发 tools/change(restriction changed),但 deny 名单
         // 不变,用 key 幂等跳过,避免 rebuild→restrict→tools/change 死循环。
         if (key === lastDenyKey) return
@@ -178,8 +181,18 @@ export function apply(ctx, rawConfig) {
     }
     rebuild()
     const offChange = ctx.on('tools/change', () => rebuild())
+    // 监听 GUI 配置文件变化:tool-manager 保存配置 → 立即重建 restrict,新会话即时生效。
+    let watcher = null
+    try {
+      watcher = watch(dirname(configPath()), (_event, filename) => {
+        if (filename === basename(configPath())) rebuild()
+      })
+    } catch {
+      // watch 不可用/目录不存在时静默降级(仍靠 tools/change 兜底)。
+    }
     return () => {
       offChange()
+      if (watcher) watcher.close()
       if (disposeRestrict) disposeRestrict()
     }
   }, 'clean-tool-filter.restrict')
