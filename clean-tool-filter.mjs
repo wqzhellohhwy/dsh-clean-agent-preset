@@ -136,29 +136,47 @@ export function apply(ctx, rawConfig) {
   const { scopeId, denyPrefixes: presetDenyPrefixes, filterSections } = config
   const gui = readGuiConfig()
 
-  // 生效豁免 = 默认 MCP 豁免 ∪ GUI 配置豁免。
-  const allowPrefixes = DEFAULT_ALLOW_PREFIXES.concat(gui.allowPrefixes)
-  // 生效 deny = 预设前缀(默认或 config 覆盖) ∪ GUI 配置追加前缀;精确名另计。
-  const denyPrefixes = presetDenyPrefixes.concat(gui.denyPrefixes)
-
-  const isAllowed = (name) =>
-    gui.allowNames.includes(name) || allowPrefixes.some((p) => name.startsWith(p))
-  const isDenied = (name) =>
-    denyPrefixes.some((p) => name.startsWith(p)) || gui.denyNames.includes(name)
-
   // 屏障 2a:全局工具层视图,动态筛选要剔除的工具名。
-  try {
-    const globalView = ctx.tools.view(undefined)
-    const deny = [...globalView.restrictableNames].filter((name) =>
-      isDenied(name) && !isAllowed(name),
-    )
-    if (deny.length > 0) {
-      ctx.effect(() => ctx.tools.restrict({ deny }), 'clean-tool-filter.restrict')
-    }
-  } catch (error) {
-    // restrict 失败不阻断装配(例如前缀命中平台缺失工具)。
-    console.error('[clean-tool-filter] restrict failed:', error?.message ?? error)
+  // 判定优先级(高→低,与 dsh-tool-manager 的 isEffectivelyDenied 一致):
+  //   allowNames > denyNames > allowPrefixes(用户) > denyPrefixes(用户)
+  //   > presetDenyPrefixes(默认第三方) > mcp__ 默认豁免。
+  // 显式 denyNames/denyPrefixes 排在 mcp 默认豁免之前 ⇒ 用户能单独屏蔽 MCP
+  // 工具,也能单独禁用一个默认屏蔽第三方分组里的单个工具(dtodo 等)。
+  const shouldDeny = (name) => {
+    if (gui.allowNames.includes(name)) return false
+    if (gui.allowPrefixes.some((p) => name.startsWith(p))) return false
+    if (gui.denyNames.includes(name)) return true
+    if (gui.denyPrefixes.some((p) => name.startsWith(p))) return true
+    if (presetDenyPrefixes.some((p) => name.startsWith(p))) return true
+    if (DEFAULT_ALLOW_PREFIXES.some((p) => name.startsWith(p))) return false
+    return false
   }
+
+  // 工具是动态注册的(宿主插件 switch 开关/晚注册),deny 名单必须随
+  // tools/change 重建,否则晚于本过滤器装配的工具(如 dsh-memory-evolve 的
+  // memory/dtodo/skill_manage/de_*)不在静态快照里、永远不会被屏蔽。
+  ctx.effect(() => {
+    let disposeRestrict = null
+    const rebuild = () => {
+      if (disposeRestrict) { disposeRestrict(); disposeRestrict = null }
+      try {
+        const globalView = ctx.tools.view(undefined)
+        const deny = [...globalView.restrictableNames].filter((name) => shouldDeny(name))
+        if (deny.length > 0) {
+          disposeRestrict = ctx.tools.restrict({ deny })
+        }
+      } catch (error) {
+        // restrict 失败不阻断装配(例如前缀命中平台缺失工具)。
+        console.error('[clean-tool-filter] restrict failed:', error?.message ?? error)
+      }
+    }
+    rebuild()
+    const offChange = ctx.on('tools/change', rebuild)
+    return () => {
+      offChange()
+      if (disposeRestrict) disposeRestrict()
+    }
+  }, 'clean-tool-filter.restrict')
 
   // 屏障 2b:拦截 system-prompt/assemble,剔除第三方插件 section。
   // 仅处理本预设(scopeId)作用域的装配;host 全局(scope=undefined)及其他

@@ -17,7 +17,7 @@
  * 本文件用 JSX(tsx)编译,tsdown 自动转 react/jsx-runtime——不要改成
  * React.createElement 全局名,那在运行时是 undefined。
  */
-import { useEffect, useMemo, useState, type ReactElement, type ChangeEvent, type KeyboardEvent } from 'react'
+import { Fragment, useEffect, useMemo, useState, type ReactElement, type ChangeEvent, type KeyboardEvent } from 'react'
 import type { SlotsService } from '@deepseek-ai/dsh-client-ui-slots'
 
 type ClientContext = {
@@ -116,7 +116,6 @@ function ToolManagerSection(): ReactElement {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<'all' | 'enabled' | 'denied'>('all')
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [selectedContexts, setSelectedContexts] = useState<Set<string>>(new Set())
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [contextNames, setContextNames] = useState<string[]>([])
 
@@ -211,7 +210,6 @@ function ToolManagerSection(): ReactElement {
 
   const reset = (): void => {
     setSelected(new Set())
-    setSelectedContexts(new Set())
     commit({ denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [], denyContexts: [] })
   }
 
@@ -256,16 +254,22 @@ function ToolManagerSection(): ReactElement {
     return out
   }, [filteredTools])
 
+  const contextSet = useMemo(() => new Set(contextNames), [contextNames])
+
   const selectableTools = useMemo(() => filteredTools.filter((t) => t.category !== 'native'), [filteredTools])
 
-  const allSelectableSelected = selectableTools.length > 0 && selectableTools.every((t) => selected.has(t.name))
+  const selectAllNames = useMemo(
+    () => [...selectableTools.map((t) => t.name), ...contextNames],
+    [selectableTools, contextNames],
+  )
+
+  const allSelectableSelected = selectAllNames.length > 0 && selectAllNames.every((n) => selected.has(n))
 
   const toggleSelectAll = (): void => {
-    const names = selectableTools.map((t) => t.name)
     setSelected((prev) => {
-      const allSel = names.length > 0 && names.every((n) => prev.has(n))
+      const allSel = selectAllNames.length > 0 && selectAllNames.every((n) => prev.has(n))
       const next = new Set(prev)
-      for (const n of names) {
+      for (const n of selectAllNames) {
         if (allSel) next.delete(n)
         else next.add(n)
       }
@@ -273,26 +277,31 @@ function ToolManagerSection(): ReactElement {
     })
   }
 
-  const toggleContext = (name: string): void => {
-    commit({
-      ...cfg,
-      denyContexts: cfg.denyContexts.includes(name)
-        ? cfg.denyContexts.filter((s) => s !== name)
-        : [...cfg.denyContexts, name],
-    })
+  // 上下文注入的纯函数式禁用/启用(denyContexts)。
+  const applyContextDeny = (cfg0: Config, name: string, denied: boolean): Config => {
+    const next: Config = { ...cfg0, denyContexts: [...cfg0.denyContexts] }
+    if (denied) {
+      if (!next.denyContexts.includes(name)) next.denyContexts.push(name)
+    } else {
+      next.denyContexts = next.denyContexts.filter((n) => n !== name)
+    }
+    return next
   }
 
-  const toggleSelectContext = (name: string): void => {
-    setSelectedContexts((prev) => {
-      const next = new Set(prev)
-      if (next.has(name)) next.delete(name)
-      else next.add(name)
-      return next
-    })
+  const toggleContext = (name: string): void => {
+    commit(applyContextDeny(cfg, name, !cfg.denyContexts.includes(name)))
   }
 
   const selectAllContexts = (): void => {
-    setSelectedContexts((prev) => (prev.size === contextNames.length && contextNames.length > 0 ? new Set<string>() : new Set(contextNames)))
+    setSelected((prev) => {
+      const allSel = contextNames.length > 0 && contextNames.every((n) => prev.has(n))
+      const next = new Set(prev)
+      for (const n of contextNames) {
+        if (allSel) next.delete(n)
+        else next.add(n)
+      }
+      return next
+    })
   }
 
   const enableAllContexts = (): void => {
@@ -301,6 +310,21 @@ function ToolManagerSection(): ReactElement {
 
   const disableAllContexts = (): void => {
     commit({ ...cfg, denyContexts: [...contextNames] })
+  }
+
+  // 批量启用/禁用「选中」:工具走 denyNames、上下文走 denyContexts。
+  const setSelectedDenied = (denied: boolean): void => {
+    if (selected.size === 0) return
+    const toolNames: string[] = []
+    const ctxNames: string[] = []
+    for (const name of selected) {
+      if (contextSet.has(name)) ctxNames.push(name)
+      else toolNames.push(name)
+    }
+    let next = cfg
+    for (const n of toolNames) next = applyDeny(next, n, denied)
+    for (const n of ctxNames) next = applyContextDeny(next, n, denied)
+    commit(next)
   }
 
   const toolsOfCategory = (cat: 'mcp' | 'third'): string[] => tools.filter((t) => t.category === cat).map((t) => t.name)
@@ -404,10 +428,10 @@ function ToolManagerSection(): ReactElement {
             <button className="tm-btn tm-blue" onClick={toggleSelectAll} title="选中除官方 DSH 原生工具外的所有可见工具">
               {allSelectableSelected ? '取消全选' : '全选'}
             </button>
-            <button className="tm-btn tm-success" onClick={() => batchSetDenied([...selected], false)} disabled={selected.size === 0}>
+            <button className="tm-btn tm-success" onClick={() => setSelectedDenied(false)} disabled={selected.size === 0}>
               启用选中
             </button>
-            <button className="tm-btn tm-danger" onClick={() => batchSetDenied([...selected], true)} disabled={selected.size === 0}>
+            <button className="tm-btn tm-danger" onClick={() => setSelectedDenied(true)} disabled={selected.size === 0}>
               禁用选中
             </button>
           </div>
@@ -438,52 +462,9 @@ function ToolManagerSection(): ReactElement {
             <PrefixInput cfg={cfg} commit={commit} />
           </div>
 
-          {contextNames.length > 0 ? (
-            <div className="tm-group">
-              <h4>上下文注入（动态上下文）</h4>
-              <div className="tm-subgroup">
-                <div className="tm-subhead">
-                  <span className="tm-subtitle">
-                    共 {contextNames.length} 项
-                    <span className="tm-subcount"></span>
-                  </span>
-                  <div className="tm-group-actions">
-                    <button className="tm-btn tm-mini tm-blue" onClick={selectAllContexts}>选中分组</button>
-                    <button className="tm-btn tm-mini tm-success" onClick={enableAllContexts}>全部启用</button>
-                    <button className="tm-btn tm-mini tm-danger" onClick={disableAllContexts}>全部禁用</button>
-                  </div>
-                </div>
-                <div className="tm-tools">
-                  {contextNames.map((name) => {
-                    const enabled = !cfg.denyContexts.includes(name)
-                    const sel = selectedContexts.has(name)
-                    return (
-                      <div
-                        className={'tm-chip' + (!enabled ? ' denied' : '') + (sel ? ' selected' : '')}
-                        key={name}
-                        title={'动态上下文：' + name + (enabled ? '（已注入）' : '（已禁用注入）')}
-                      >
-                        <input type="checkbox" checked={sel} onChange={() => toggleSelectContext(name)} title="选中（用于批量操作）" />
-                        <span className="tm-name">{name}</span>
-                        <button
-                          className={'tm-switch' + (enabled ? ' on' : ' off')}
-                          role="switch"
-                          aria-checked={enabled}
-                          onClick={() => toggleContext(name)}
-                          title={enabled ? '点击禁用注入' : '点击启用注入'}
-                        >
-                          {enabled ? '启用' : '禁用'}
-                        </button>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            </div>
-          ) : null}
-
           {sections.map((sec) => (
-            <div className="tm-group" key={sec.cat}>
+            <Fragment key={sec.cat}>
+              <div className="tm-group">
               <h4>{sec.label}</h4>
               {sec.subs.map((sub) => {
                 const isCollapsed = collapsed.has(sub.key)
@@ -562,6 +543,50 @@ function ToolManagerSection(): ReactElement {
                 )
               })}
             </div>
+              {sec.cat === 'native' && contextNames.length > 0 ? (
+                <div className="tm-group">
+                  <h4>上下文注入（动态上下文）</h4>
+                  <div className="tm-subgroup">
+                    <div className="tm-subhead">
+                      <span className="tm-subtitle">
+                        共 {contextNames.length} 项
+                        <span className="tm-subcount"></span>
+                      </span>
+                      <div className="tm-group-actions">
+                        <button className="tm-btn tm-mini tm-blue" onClick={selectAllContexts}>选中分组</button>
+                        <button className="tm-btn tm-mini tm-success" onClick={enableAllContexts}>全部启用</button>
+                        <button className="tm-btn tm-mini tm-danger" onClick={disableAllContexts}>全部禁用</button>
+                      </div>
+                    </div>
+                    <div className="tm-tools">
+                      {contextNames.map((name) => {
+                        const enabled = !cfg.denyContexts.includes(name)
+                        const sel = selected.has(name)
+                        return (
+                          <div
+                            className={'tm-chip' + (!enabled ? ' denied' : '') + (sel ? ' selected' : '')}
+                            key={name}
+                            title={'动态上下文：' + name + (enabled ? '（已注入）' : '（已禁用注入）')}
+                          >
+                            <input type="checkbox" checked={sel} onChange={() => toggleSelect(name)} title="选中（用于批量操作）" />
+                            <span className="tm-name">{name}</span>
+                            <button
+                              className={'tm-switch' + (enabled ? ' on' : ' off')}
+                              role="switch"
+                              aria-checked={enabled}
+                              onClick={() => toggleContext(name)}
+                              title={enabled ? '点击禁用注入' : '点击启用注入'}
+                            >
+                              {enabled ? '启用' : '禁用'}
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </Fragment>
           ))}
 
           <div className="tm-save-row">
