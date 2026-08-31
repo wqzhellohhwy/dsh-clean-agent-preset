@@ -42,7 +42,10 @@ type AppContext = Context & {
     get(name: string, scope?: unknown): { description?: string } | undefined
   }
   systemPrompt?: {
-    assemble(context?: unknown): Promise<{ sections?: Array<{ name?: string }> }>
+    assemble(context?: unknown): Promise<{
+      sections?: Array<{ name?: string }>
+      contexts?: Array<{ name?: string }>
+    }>
   }
 }
 
@@ -62,10 +65,10 @@ interface Config {
   denyNames: string[]
   allowPrefixes: string[]
   allowNames: string[]
-  allowSections: string[]
+  denyContexts: string[]
 }
 
-const EMPTY: Config = { denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [], allowSections: [] }
+const EMPTY: Config = { denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [], denyContexts: [] }
 
 function readConfig(): Config {
   try {
@@ -77,7 +80,7 @@ function readConfig(): Config {
       denyNames: Array.isArray(cfg?.denyNames) ? cfg.denyNames : [],
       allowPrefixes: Array.isArray(cfg?.allowPrefixes) ? cfg.allowPrefixes : [],
       allowNames: Array.isArray(cfg?.allowNames) ? cfg.allowNames : [],
-      allowSections: Array.isArray(cfg?.allowSections) ? cfg.allowSections : [],
+      denyContexts: Array.isArray(cfg?.denyContexts) ? cfg.denyContexts : [],
     }
   } catch {
     return { ...EMPTY }
@@ -154,15 +157,12 @@ function listTools(ctx: AppContext): { name: string; description: string; catego
     })
 }
 
-async function listSections(ctx: AppContext): Promise<string[]> {
+async function listContexts(ctx: AppContext): Promise<string[]> {
   const sp = ctx.get?.('systemPrompt') as AppContext['systemPrompt'] | undefined
   if (!sp || typeof sp.assemble !== 'function') return []
   try {
     const assembled = await sp.assemble()
-    const names = (assembled?.sections ?? []).map((s) => s?.name)
-    return names.filter((n): n is string =>
-      typeof n === 'string' && n.startsWith('tool:') && n.indexOf('-', 'tool:'.length) !== -1,
-    )
+    return (assembled?.contexts ?? []).map((c) => c?.name).filter((n): n is string => typeof n === 'string')
   } catch {
     return []
   }
@@ -197,8 +197,8 @@ export function apply(ctx: AppContext): void {
         const method = String(req.method ?? 'GET').toUpperCase()
 
         if (method === 'GET' && path === '/tools') {
-          const sections = await listSections(ctx)
-          return json(res, 200, { ok: true, tools: listTools(ctx), config: readConfig(), sections })
+          const contexts = await listContexts(ctx)
+          return json(res, 200, { ok: true, tools: listTools(ctx), config: readConfig(), contexts })
         }
         if (method === 'GET' && path === '/config') {
           return json(res, 200, { ok: true, config: readConfig() })
@@ -210,7 +210,7 @@ export function apply(ctx: AppContext): void {
             denyNames: Array.isArray(body?.denyNames) ? body.denyNames : [],
             allowPrefixes: Array.isArray(body?.allowPrefixes) ? body.allowPrefixes : [],
             allowNames: Array.isArray(body?.allowNames) ? body.allowNames : [],
-            allowSections: Array.isArray(body?.allowSections) ? body.allowSections : [],
+            denyContexts: Array.isArray(body?.denyContexts) ? body.denyContexts : [],
           }
           const ok = writeConfig(next)
           return json(res, ok ? 200 : 500, { ok, config: ok ? next : readConfig() })

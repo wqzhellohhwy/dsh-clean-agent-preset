@@ -123,11 +123,11 @@ function readGuiConfig() {
       denyNames: Array.isArray(cfg?.denyNames) ? cfg.denyNames : [],
       allowPrefixes: Array.isArray(cfg?.allowPrefixes) ? cfg.allowPrefixes : [],
       allowNames: Array.isArray(cfg?.allowNames) ? cfg.allowNames : [],
-      allowSections: Array.isArray(cfg?.allowSections) ? cfg.allowSections : [],
+      denyContexts: Array.isArray(cfg?.denyContexts) ? cfg.denyContexts : [],
     }
   } catch {
     // 配置缺失/损坏时回退默认,绝不阻断装配。
-    return { denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [], allowSections: [] }
+    return { denyPrefixes: [], denyNames: [], allowPrefixes: [], allowNames: [], denyContexts: [] }
   }
 }
 
@@ -172,17 +172,28 @@ export function apply(ctx, rawConfig) {
     const assembled = await next()
     if (!filterSections) return assembled
     try {
-      if (!assembled || !Array.isArray(assembled.sections)) return assembled
-      const kept = assembled.sections.filter((section) => {
-        const name = typeof section?.name === 'string' ? section.name : ''
-        if (!name.startsWith('tool:')) return true // 非 tool: section(官方 harness:/app:/deployment:/ui:)保留
-        // 官方工具 section 名是纯功能词(无连字符),保留;第三方插件 section
-        // 名是插件名(含连字符,如 dsh-undo-savepoint),默认剔除,仅当 GUI
-        // 配置 allowSections 显式豁免时才保留(「注入上下文管理」)。
-        return name.indexOf('-', 'tool:'.length) === -1 || gui.allowSections.includes(name)
-      })
-      if (kept.length === assembled.sections.length) return assembled
-      return { ...assembled, sections: kept }
+      if (!assembled || typeof assembled !== 'object') return assembled
+      let result = assembled
+      // 2b:剔除第三方插件的 tool:* section(插件名含连字符),官方纯功能词 section 保留。
+      if (Array.isArray(assembled.sections)) {
+        const keptSections = assembled.sections.filter((section) => {
+          const name = typeof section?.name === 'string' ? section.name : ''
+          if (!name.startsWith('tool:')) return true
+          return name.indexOf('-', 'tool:'.length) === -1
+        })
+        if (keptSections.length !== assembled.sections.length) {
+          result = { ...result, sections: keptSections }
+        }
+      }
+      // 2c:剔除被 GUI 配置 denyContexts 禁用的动态上下文(sandbox:policy /
+      // approval:policy / memory:snapshot / dsh-super-injector 等)。
+      if (Array.isArray(assembled.contexts) && gui.denyContexts.length > 0) {
+        const keptContexts = assembled.contexts.filter((c) => !gui.denyContexts.includes(c?.name))
+        if (keptContexts.length !== assembled.contexts.length) {
+          result = { ...result, contexts: keptContexts }
+        }
+      }
+      return result
     } catch {
       // 过滤失败时保持原样,绝不破坏装配。
       return assembled
