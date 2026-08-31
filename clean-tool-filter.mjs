@@ -63,6 +63,7 @@ export const inject = ['tools']
  *   context_audit    dsh-context-doctor(上下文审计)
  *   describe_image   @linxin666/dsh-tool-describe-image(看图)
  *   de_*             memory-evolve 渠道/会话工具(de_channel_send 等)
+ *   file_mount_forget dsh-file-mount(文件增量挂载插件,非 DSH 官方工具)
  *
  * 保留:mcp__* 开头的 MCP 工具(默认豁免,可在 GUI 中单独屏蔽)、官方工具
  * (web_search / web_fetch / ask_user_question / skill / read / write / edit
@@ -79,6 +80,7 @@ const DEFAULT_DENY_PREFIXES = [
   'context_audit',
   'describe_image',
   'de_',
+  'file_mount_forget',
 ]
 
 // MCP 工具默认豁免:宿主 dsh-mcp-manager 注册,是用户可控的浏览器/搜索等能力。
