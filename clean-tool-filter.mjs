@@ -157,11 +157,17 @@ export function apply(ctx, rawConfig) {
   // memory/dtodo/skill_manage/de_*)不在静态快照里、永远不会被屏蔽。
   ctx.effect(() => {
     let disposeRestrict = null
+    let lastDenyKey = null
     const rebuild = () => {
-      if (disposeRestrict) { disposeRestrict(); disposeRestrict = null }
       try {
         const globalView = ctx.tools.view(undefined)
         const deny = [...globalView.restrictableNames].filter((name) => shouldDeny(name))
+        const key = deny.join('\u0001')
+        // restrict() 本身会触发 tools/change(restriction changed),但 deny 名单
+        // 不变,用 key 幂等跳过,避免 rebuild→restrict→tools/change 死循环。
+        if (key === lastDenyKey) return
+        lastDenyKey = key
+        if (disposeRestrict) { disposeRestrict(); disposeRestrict = null }
         if (deny.length > 0) {
           disposeRestrict = ctx.tools.restrict({ deny })
         }
@@ -171,7 +177,7 @@ export function apply(ctx, rawConfig) {
       }
     }
     rebuild()
-    const offChange = ctx.on('tools/change', rebuild)
+    const offChange = ctx.on('tools/change', () => rebuild())
     return () => {
       offChange()
       if (disposeRestrict) disposeRestrict()
