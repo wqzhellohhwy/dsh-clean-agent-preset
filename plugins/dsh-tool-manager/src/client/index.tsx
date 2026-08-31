@@ -77,9 +77,9 @@ const styles = `
 .tm-subtitle{font-size:12px;color:var(--dsw-alias-label-secondary);margin:0;font-weight:600}
 .tm-subcount{color:var(--dsw-alias-label-tertiary);font-weight:400;margin-left:6px}
 .tm-btn.tm-mini{padding:2px 8px;font-size:12px}
-.tm-btn.tm-blue{background:var(--dsw-alias-state-business-primary);color:#fff;border:1px solid var(--dsw-alias-state-business-primary)}
-.tm-btn.tm-danger{background:var(--dsw-alias-state-error-primary);color:#fff;border:1px solid var(--dsw-alias-state-error-primary)}
-.tm-btn.tm-success{background:var(--dsw-alias-state-success-primary);color:#fff;border:1px solid var(--dsw-alias-state-success-primary)}
+.tm-btn.tm-blue{background:#2563eb;color:#fff;border:1px solid #2563eb}
+.tm-btn.tm-danger{background:#e5484d;color:#fff;border:1px solid #e5484d}
+.tm-btn.tm-success{background:#16a34a;color:#fff;border:1px solid #16a34a}
 .tm-tools{display:flex;flex-wrap:wrap;gap:6px}
 .tm-chip{display:flex;align-items:center;gap:7px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 8px;font-size:13px;background:var(--dsw-alias-bg-layer-2)}
 .tm-chip input[type=checkbox]{cursor:pointer}
@@ -91,7 +91,8 @@ const styles = `
 .tm-switch.on{background:var(--dsw-alias-state-success-primary);color:#fff}
 .tm-switch.off{background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary)}
 .tm-batch{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;padding:8px 10px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px}
-.tm-sep{width:1px;align-self:stretch;background:var(--dsw-alias-border-l2);margin:0 2px}
+.tm-batch.tm-sticky{position:sticky;top:8px;z-index:30;box-shadow:0 2px 10px rgba(0,0,0,.18)}
+.tm-label{font-size:12px;color:var(--dsw-alias-label-tertiary)}
 .tm-save-row{display:flex;gap:8px;align-items:center;margin-top:12px}
 .tm-status{font-size:13px;color:var(--dsw-alias-state-success-primary)}
 .tm-status.err{color:var(--dsw-alias-state-error-primary)}
@@ -248,10 +249,21 @@ function ToolManagerSection(): ReactElement {
     return out
   }, [filteredTools])
 
-  const allVisibleSelected = filteredTools.length > 0 && filteredTools.every((t) => selected.has(t.name))
+  const selectableTools = useMemo(() => filteredTools.filter((t) => t.category !== 'native'), [filteredTools])
+
+  const allSelectableSelected = selectableTools.length > 0 && selectableTools.every((t) => selected.has(t.name))
 
   const toggleSelectAll = (): void => {
-    setSelected(allVisibleSelected ? new Set<string>() : new Set(filteredTools.map((t) => t.name)))
+    const names = selectableTools.map((t) => t.name)
+    setSelected((prev) => {
+      const allSel = names.length > 0 && names.every((n) => prev.has(n))
+      const next = new Set(prev)
+      for (const n of names) {
+        if (allSel) next.delete(n)
+        else next.add(n)
+      }
+      return next
+    })
   }
 
   const selectDisableCategory = (cat: 'mcp' | 'third'): void => {
@@ -305,7 +317,7 @@ function ToolManagerSection(): ReactElement {
 
   return (
     <div className="tm-page">
-      <h3>工具管理（纯净预设 clean-agent）</h3>
+      <h3>预设工具管理（纯净预设 clean-agent）</h3>
       <p className="tm-desc">
         针对 clean-agent 纯净预设控制工具面：MCP 工具与 DSH 原生工具默认启用，第三方插件工具默认屏蔽。
         每个工具右侧的开关控制「启用/禁用」，左侧 ☑️ 用于批量选中。改动即时自动保存，对新会话生效。
@@ -342,18 +354,21 @@ function ToolManagerSection(): ReactElement {
             {query.trim() || filter !== 'all' ? `，筛选后 ${filteredTools.length} 个` : ''}
           </div>
 
-          <div className="tm-batch">
+          <div className="tm-batch tm-sticky">
             <span className="tm-count">已选 {selected.size} 个</span>
-            <button className="tm-btn ghost" onClick={toggleSelectAll}>
-              {allVisibleSelected ? '取消全选' : '全选'}
+            <button className="tm-btn tm-blue" onClick={toggleSelectAll} title="选中除官方 DSH 原生工具外的所有可见工具">
+              {allSelectableSelected ? '取消全选' : '全选'}
             </button>
-            <button className="tm-btn danger" onClick={() => batchSetDenied([...selected], true)} disabled={selected.size === 0}>
-              禁用选中
-            </button>
-            <button className="tm-btn ghost" onClick={() => batchSetDenied([...selected], false)} disabled={selected.size === 0}>
+            <button className="tm-btn tm-success" onClick={() => batchSetDenied([...selected], false)} disabled={selected.size === 0}>
               启用选中
             </button>
-            <span className="tm-sep" />
+            <button className="tm-btn tm-danger" onClick={() => batchSetDenied([...selected], true)} disabled={selected.size === 0}>
+              禁用选中
+            </button>
+          </div>
+
+          <div className="tm-batch">
+            <span className="tm-label">一键禁用</span>
             <button className="tm-btn ghost" onClick={() => selectDisableCategory('mcp')}>
               选中并禁用所有 MCP
             </button>
@@ -511,6 +526,6 @@ export function apply(ctx: ClientContext): void {
     name: 'settings.section',
     id: 'tool-manager',
     order: 20,
-    label: () => '工具管理',
+    label: () => '预设工具管理',
   }, ToolManagerSection))
 }
