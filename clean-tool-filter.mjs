@@ -202,8 +202,14 @@ export function apply(ctx, rawConfig) {
   // 预设原样放行。prepend 让过滤器成为最外层 transform,避免后续注册的
   // 插件重新注入。
   ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
-    const scope = context && context.scope
-    if (!scope || typeof scope !== 'object' || scope.agentPreset !== scopeId) {
+    // 真实装配事件的 context.scope 是 Agent 对象,preset id 存放在
+    // session.header.agentPreset;scope.agentPreset 字段并不存在(直接读是
+    // undefined),旧判定恒为 false,导致 2b/2c 从未生效——第三方 section
+    // 一直注入、denyContexts 禁用上下文也从不生效。此为修复点。
+    const agent = context && context.scope
+    const header = agent && agent.session ? agent.session.header : undefined
+    const presetId = header && typeof header.agentPreset === 'string' ? header.agentPreset : undefined
+    if (presetId !== scopeId) {
       return next()
     }
     const assembled = await next()
